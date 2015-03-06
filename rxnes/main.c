@@ -199,18 +199,18 @@ void DestroyDX()
 
 	if (g_pD3DDevice)
 	{
-		IDirect3D9_Release(g_pD3DDevice);
+		IDirect3DDevice9_Release(g_pD3DDevice);
 		g_pD3DDevice = NULL;
 	}
 
 	if (g_pDInput)
 	{
-		IDirect3D9_Release(g_pDInput);
+		IDirectInput_Release(g_pDInput);
 		g_pDInput = NULL;
 	}
 	if (g_pDInputDevice)
 	{
-		IDirect3D9_Release(g_pDInputDevice);
+		IDirectInputDevice_Release(g_pDInputDevice);
 		g_pDInputDevice = NULL;
 	}
 
