@@ -5,224 +5,305 @@
 #include "input.h"
 #include <stdio.h>
 #include <time.h>
-#include <SDL/SDL.h>
+#include <windows.h>
+#include <d3d9.h>
+#include <tchar.h>
+#include <dinput.h>
+
+#pragma comment(lib, "d3d9.lib")
+#pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "dinput8.lib")
 
 #define CYCLE_PER_SCANLINE 114
-
-SDL_Surface *sdl_screen;
+#define RX_NES_WND_CLASS _T("RXNesWnd")
 
 static u16 screen2[480][512];
 
+LPDIRECT3D9 g_pD3D;
+LPDIRECT3DDEVICE9 g_pD3DDevice;
+LPDIRECT3DSURFACE9 g_pBackbuffer;
+LPDIRECTINPUT g_pDInput;
+LPDIRECTINPUTDEVICE g_pDInputDevice;
+
+HINSTANCE g_hInstance;
 
 int running;
 int pause;
 
 void scale2( u16 sc[][256], u16 sc2[][512] )
 {
-    int i, j;
-    int w, h;
+	int i, j;
+	int w, h;
 
-    for ( i = 0; i < 240; ++i )
-    {
-        w = i * 2;
-        for ( j = 0; j < 256 ; ++ j )
-        {
-            h = j * 2;
-            sc2[w][h] = sc[i][j];
-            sc2[w][h + 1] = sc[i][j];
-            sc2[w + 1][h] = sc[i][j];
-            sc2[w + 1][h + 1] = sc[i][j];
-        }
-    }
-}
-
-void init_sdl( void )
-{
-    SDL_Init( SDL_INIT_VIDEO );
-    sdl_screen = SDL_SetVideoMode( 512, 480, 16, SDL_DOUBLEBUF | SDL_HWSURFACE );
+	for ( i = 0; i < 240; ++i )
+	{
+		w = i * 2;
+		for ( j = 0; j < 256 ; ++ j )
+		{
+			h = j * 2;
+			sc2[w][h] = sc[i][j];
+			sc2[w][h + 1] = sc[i][j];
+			sc2[w + 1][h] = sc[i][j];
+			sc2[w + 1][h + 1] = sc[i][j];
+		}
+	}
 }
 
 static void quit( void )
 {
-    exit( 0 );
+	running = 0;
 }
 
 void handle_key_event( void )
 {
-    int ret;
-    SDL_Event e;
+	#define KEYDOWN(name, key) (name[key] & 0x80)
 
-    SDL_PumpEvents();
-    ret = SDL_PeepEvents( &e, 1, SDL_GETEVENT, SDL_KEYEVENTMASK );
+	char fDIKeyboardState[256];
+	HRESULT hr;
+	// get the keyboard state
+	hr = IDirectInputDevice_GetDeviceState(
+		g_pDInputDevice,
+		sizeof(fDIKeyboardState),
+		(LPVOID)&fDIKeyboardState
+		);
+	if (FAILED(hr))
+	{
+		IDirectInputDevice_Acquire(g_pDInputDevice);
+		return;
+	}
 
-    if ( ret < 1 )
-        return;
+	struct KeyJOYPAD
+	{
+		int key;
+		int joypad;
+	};
 
-    //process key event
-    if ( e.type == SDL_KEYDOWN )
-    {
-        switch ( e.key.keysym.sym )
-        {
-        case SDLK_1:
-            input_button_down( JOYPAD_SELECT );
-            break;
+	struct KeyJOYPAD keyJoypad[] =
+	{
+		DIK_1, JOYPAD_SELECT,
+		DIK_2, JOYPAD_START, 
+		DIK_W, JOYPAD_UP,
+		DIK_A, JOYPAD_LEFT,
+		DIK_S, JOYPAD_DOWN,
+		DIK_D, JOYPAD_RIGHT,
+		DIK_K, JOYPAD_A,
+		DIK_J, JOYPAD_B
+	};
 
-        case SDLK_2:
-            input_button_down( JOYPAD_START );
-            break;
-
-        case SDLK_a:
-            input_button_down( JOYPAD_LEFT );
-            break;
-
-        case SDLK_d:
-            input_button_down( JOYPAD_RIGHT );
-            break;
-
-        case SDLK_w:
-            input_button_down( JOYPAD_UP );
-            break;
-
-        case SDLK_s:
-            input_button_down( JOYPAD_DOWN );
-            break;
-
-        case SDLK_j:
-            input_button_down( JOYPAD_B );
-            break;
-
-        case SDLK_k:
-            input_button_down( JOYPAD_A );
-            break;
-
-        case SDLK_ESCAPE:
-            running = !running;
-            break;
-
-        case SDLK_SPACE:
-            pause = 1;
-            break;
-
-        default:
-            break;
-        }
-    }
-
-    if ( e.type == SDL_KEYUP )
-    {
-        switch ( e.key.keysym.sym )
-        {
-        case SDLK_1:
-            input_button_up( JOYPAD_SELECT );
-            break;
-
-        case SDLK_2:
-            input_button_up( JOYPAD_START );
-            break;
-
-        case SDLK_a:
-            input_button_up( JOYPAD_LEFT );
-            break;
-
-        case SDLK_d:
-            input_button_up( JOYPAD_RIGHT );
-            break;
-
-        case SDLK_w:
-            input_button_up( JOYPAD_UP );
-            break;
-
-
-        case SDLK_s:
-            input_button_up( JOYPAD_DOWN );
-            break;
-
-        case SDLK_j:
-            input_button_up( JOYPAD_B );
-            break;
-
-        case SDLK_k:
-            input_button_up( JOYPAD_A );
-            break;
-
-        default:
-            break;
-        }
-    }
+	//process key event
+	for (int i = 0; i < sizeof(keyJoypad) / sizeof(keyJoypad[0]); ++i)
+	{
+		if (KEYDOWN(fDIKeyboardState, keyJoypad[i].key))
+		{
+			input_button_down(keyJoypad[i].joypad);
+		}
+		else
+		{
+			input_button_up(keyJoypad[i].joypad);
+		}
+	}
 }
 
 void powerup( void )
 {
-    regs.FLAGS = 0x34;
-    regs.SP = 0xfd;
+	regs.FLAGS = 0x34;
+	regs.SP = 0xfd;
 }
 
-int main ( void )
+LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 {
-    SDL_Event e;
-    int scan_line = 0;
+	switch (nMessage)
+	{
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		break;
+	default:
+		break;
+	}
 
-    LOG_INIT();
-    powerup();
+	return DefWindowProc(hWnd, nMessage, wParam, lParam);
+}
 
-    ines_loadrom( "c.nes" );
+BOOL InitDX(HWND hWnd)
+{
+	g_pD3D = Direct3DCreate9(D3D_SDK_VERSION);
+	if (!g_pD3D)
+	{
+		return 0;
+	}
 
-    cpu_reset();
-    ppu_init();
-    init_sdl();
+	D3DPRESENT_PARAMETERS d3dpp;
+	ZeroMemory(&d3dpp, sizeof(d3dpp));
+	d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+	d3dpp.Windowed = TRUE;
+	d3dpp.hDeviceWindow = hWnd;
+	d3dpp.BackBufferCount = 1;
+	d3dpp.BackBufferFormat = D3DFMT_R5G6B5;
+	d3dpp.EnableAutoDepthStencil = TRUE;//TRUE;//FALSE;
+	d3dpp.AutoDepthStencilFormat = D3DFMT_D16;
+	d3dpp.Flags = D3DPRESENTFLAG_LOCKABLE_BACKBUFFER;
 
-    input_init( handle_key_event );
+	IDirect3D9_CreateDevice(g_pD3D, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &g_pD3DDevice);
+	if (!g_pD3DDevice)
+	{
+		return FALSE;
+	}
 
-    running = 1;
+	IDirect3DDevice9_GetBackBuffer(g_pD3DDevice, 0, 0, D3DBACKBUFFER_TYPE_MONO, &g_pBackbuffer);
+	if (!g_pBackbuffer)
+	{
+		return FALSE;
+	}
 
-    while ( running )
-    {
-        if ( !pause )
-        {
-            cpu_execute_translate( CYCLE_PER_SCANLINE );
-            ppu_render_scanline( CYCLE_PER_SCANLINE * 3 );
-        }
+	DirectInput8Create(g_hInstance, DIRECTINPUT_VERSION, &IID_IDirectInput8, &g_pDInput, NULL);
+	if (!g_pDInput)
+	{
+		return FALSE;
+	}
+
+	IDirectInput_CreateDevice(g_pDInput, &GUID_SysKeyboard, &g_pDInputDevice, NULL);
+	if (!g_pDInputDevice)
+	{
+		return FALSE;
+	}
 
 
+	HRESULT hr = IDirectInputDevice_SetDataFormat(g_pDInputDevice, &c_dfDIKeyboard);
+	if (FAILED(hr))
+	{
+		return FALSE;
+	}
 
-        scan_line = ( scan_line + 1 ) % 240;
-        if ( scan_line == 0 )
-        {
-            scale2( screen, screen2 );
-            SDL_LockSurface( sdl_screen );
+	hr = IDirectInputDevice_SetCooperativeLevel(g_pDInputDevice, hWnd, DISCL_FOREGROUND | DISCL_EXCLUSIVE);
+	if (FAILED(hr))
+	{
+		return FALSE;
+	}
 
-            SDL_memcpy( sdl_screen->pixels, screen2, 480 * 512 * 2 );
+	hr = IDirectInputDevice_Acquire(g_pDInputDevice);
+	if (FAILED(hr))
+	{
+		return FALSE;
+	}
 
-            SDL_UnlockSurface( sdl_screen );
+	return TRUE;
+}
 
-            SDL_Flip( sdl_screen );
-        }
+void DestroyDX()
+{
+	if (g_pD3D)
+	{
+		IDirect3D9_Release(g_pD3D);
+		g_pD3D = NULL;
+	}
 
-        SDL_PumpEvents();
-        if ( SDL_PeepEvents( &e, 1, SDL_GETEVENT, SDL_QUITMASK ) > 0 )
-        {
-            quit();
-        }
+	if (g_pD3DDevice)
+	{
+		IDirect3D9_Release(g_pD3DDevice);
+		g_pD3DDevice = NULL;
+	}
 
-        if ( pause )
-        {
-            if ( SDL_PeepEvents( &e, 1, SDL_GETEVENT, SDL_KEYEVENTMASK ) > 0 )
-            {
-                if ( e.type == SDL_KEYDOWN )
-                {
-                    if ( e.key.keysym.sym == SDLK_SPACE )
-                    {
-                        pause = 0;
-                    }
-                }
-            }
-        }
+	if (g_pDInput)
+	{
+		IDirect3D9_Release(g_pDInput);
+		g_pDInput = NULL;
+	}
+	if (g_pDInputDevice)
+	{
+		IDirect3D9_Release(g_pDInputDevice);
+		g_pDInputDevice = NULL;
+	}
 
-    }
+}
 
-    ines_unloadrom();
+int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCmdLine, int nCmdShow)
+{
+	g_hInstance = hInstance;
 
-    LOG_CLOSE();
+	WNDCLASS wndClass;
+	ZeroMemory(&wndClass, sizeof(wndClass));
+	wndClass.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wndClass.hInstance = hInstance;
+	wndClass.lpfnWndProc = WndProc;
+	wndClass.style = CS_VREDRAW | CS_HREDRAW;
+	wndClass.lpszClassName = RX_NES_WND_CLASS;
 
-    return 0;
+	if (!RegisterClass(&wndClass))
+	{
+		return EXIT_FAILURE;
+	}
+
+	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("RxNes"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 512, 480, NULL, NULL, hInstance, NULL);
+	if (!hWnd)
+	{
+		return EXIT_FAILURE;
+	}
+
+	ShowWindow(hWnd, SW_SHOW);
+	
+	InitDX(hWnd);
+
+
+	int scan_line = 0;
+
+	LOG_INIT();
+	powerup();
+
+	ines_loadrom("Super Mario Bros. (E).nes");
+
+	cpu_reset();
+	ppu_init();
+
+	input_init(handle_key_event);
+
+	running = 1;
+
+	while (running)
+	{
+		MSG msg;
+		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			if (msg.message == WM_QUIT)
+			{
+				running = 0;
+				break;
+			}
+
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		else
+		{
+			if (!pause)
+			{
+				cpu_execute_translate(CYCLE_PER_SCANLINE);
+				ppu_render_scanline(CYCLE_PER_SCANLINE * 3);
+				scan_line = (scan_line + 1) % 240;
+				if (scan_line == 0)
+				{
+					scale2(screen, screen2);
+
+					// copy
+					IDirect3DDevice9_Clear(g_pD3DDevice, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+					D3DLOCKED_RECT lockedRect;
+					HRESULT hr = IDirect3DSurface9_LockRect(g_pBackbuffer, &lockedRect, NULL, D3DLOCK_DISCARD);
+
+					if (SUCCEEDED(hr))
+					{
+						CopyMemory(lockedRect.pBits, screen2, 480 * 512 * 2);
+						IDirect3DSurface9_UnlockRect(g_pBackbuffer);
+					}
+					IDirect3DDevice9_Present(g_pD3DDevice, NULL, NULL, NULL, NULL);
+				}
+			}
+		}
+	}
+
+	DestroyDX();
+
+	ines_unloadrom();
+
+	LOG_CLOSE();
+
+	return EXIT_SUCCESS;
 }
