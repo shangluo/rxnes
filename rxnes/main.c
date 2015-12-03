@@ -233,7 +233,11 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 		return EXIT_FAILURE;
 	}
 
-	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("RxNes"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 512, 480, NULL, NULL, hInstance, NULL);
+	RECT rt;
+	SetRect(&rt, 0, 0, 512, 480);
+	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, FALSE);
+
+	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("RxNes"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, hInstance, NULL);
 	if (!hWnd)
 	{
 		return EXIT_FAILURE;
@@ -284,13 +288,13 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 					scale2(screen, screen2);
 
 					// copy
-					IDirect3DDevice9_Clear(g_pD3DDevice, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+					//IDirect3DDevice9_Clear(g_pD3DDevice, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
 					D3DLOCKED_RECT lockedRect;
 					HRESULT hr = IDirect3DSurface9_LockRect(g_pBackbuffer, &lockedRect, NULL, D3DLOCK_DISCARD);
 
 					if (SUCCEEDED(hr))
 					{
-						CopyMemory(lockedRect.pBits, screen2, 480 * 512 * 2);
+						CopyMemory(lockedRect.pBits, screen2, 480 * 512 * sizeof(u16));
 						IDirect3DSurface9_UnlockRect(g_pBackbuffer);
 					}
 					IDirect3DDevice9_Present(g_pD3DDevice, NULL, NULL, NULL, NULL);
