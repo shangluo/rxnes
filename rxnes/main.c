@@ -17,7 +17,11 @@
 #define CYCLE_PER_SCANLINE 114
 #define RX_NES_WND_CLASS _T("RXNesWnd")
 
+#define IDM_OPEN_NES_ROM 0x101
+
 static u16 screen2[480][512];
+
+static int rom_loaded;
 
 LPDIRECT3D9 g_pD3D;
 LPDIRECT3DDEVICE9 g_pD3DDevice;
@@ -26,6 +30,8 @@ LPDIRECTINPUT g_pDInput;
 LPDIRECTINPUTDEVICE g_pDInputDevice;
 
 HINSTANCE g_hInstance;
+
+HMENU g_hMenu;
 
 int running;
 int pause;
@@ -110,13 +116,66 @@ void powerup( void )
 	regs.SP = 0xfd;
 }
 
+void CreateMenus(HWND hWnd)
+{
+	HMENU hMenu = CreateMenu();
+	HMENU hMenuFile = CreatePopupMenu();
+	AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hMenuFile, _T("File"));
+	AppendMenu(hMenuFile, MF_STRING, IDM_OPEN_NES_ROM,  _T("Open nes rom"));
+
+	SetMenu(hWnd, hMenu);
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 {
+	WORD wCommondID = 0;
 	switch (nMessage)
 	{
+	case WM_CREATE:
+		CreateMenus(hWnd);
+		break;
+
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
+
+	case WM_COMMAND:
+		wCommondID = LOWORD(wParam);
+		if (wCommondID == IDM_OPEN_NES_ROM)
+		{
+			if (rom_loaded)
+			{
+				ines_unloadrom();
+			}
+
+			char fileName[MAX_PATH] = "";
+
+			OPENFILENAMEA  ofn;
+			ZeroMemory(&ofn, sizeof(ofn));
+			
+			ofn.lStructSize = sizeof(OPENFILENAME);
+			ofn.hwndOwner = hWnd;
+			ofn.lpstrFilter = "Nes File(*.nes)\0*.NES\0\0\0";
+			ofn.lpstrFile = fileName;
+			ofn.nMaxFile = MAX_PATH;
+			ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST;
+
+			if (GetOpenFileNameA(&ofn))
+			{
+				DWORD err = CommDlgExtendedError();
+				ines_loadrom(fileName);
+			
+				rom_loaded = 1;
+
+				powerup();
+
+				cpu_reset();
+				ppu_init();
+
+				input_init(handle_key_event);
+			}
+		}
+
 	default:
 		break;
 	}
@@ -235,13 +294,14 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 	RECT rt;
 	SetRect(&rt, 0, 0, 512, 480);
-	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, FALSE);
+	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, TRUE);
 
 	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("RxNes"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, hInstance, NULL);
 	if (!hWnd)
 	{
 		return EXIT_FAILURE;
 	}
+
 
 	ShowWindow(hWnd, SW_SHOW);
 	
@@ -250,17 +310,11 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 	int scan_line = 0;
 
-	LOG_INIT();
-	powerup();
-
-	ines_loadrom("Super Mario Bros. (E).nes");
-
-	cpu_reset();
-	ppu_init();
-
-	input_init(handle_key_event);
+	rom_loaded = 0;
 
 	running = 1;
+
+	LOG_INIT();
 
 	while (running)
 	{
@@ -278,11 +332,13 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 		}
 		else
 		{
-			if (!pause)
+			if (!pause && rom_loaded)
 			{
 				cpu_execute_translate(CYCLE_PER_SCANLINE);
 				ppu_render_scanline(CYCLE_PER_SCANLINE * 3);
-				scan_line = (scan_line + 1) % 240;
+				//scan_line = (scan_line + 1) % 240;
+				extern u16 cur_scanline;
+				scan_line = cur_scanline;
 				if (scan_line == 0)
 				{
 					scale2(screen, screen2);

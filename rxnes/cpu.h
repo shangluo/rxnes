@@ -55,7 +55,7 @@ extern registers regs;
 #define NF regs.SR.N
 
 void cpu_reset( void );
-u32  cpu_execute_translate( s32 n_cycles );
+u32  cpu_execute_translate( u32 n_cycles );
 void cpu_test( void );
 
 //stack operation

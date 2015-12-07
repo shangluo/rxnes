@@ -37,7 +37,9 @@ extern u8 cam_x, cam_y, fine_x;
 u32 cpu_cycles;
 
 //mapper function
-void mapper1_handler( u16 addr, u8 data );
+void mapper1_handler(u16 addr, u8 data);
+void mapper2_handler(u16 addr, u8 data);
+void mapper3_handler(u16 addr, u8 data);
 
 static void cpu_handle_io( u16 reg );
 static void cpu_handle_dma( void );
@@ -250,6 +252,8 @@ static void read_from_oam( void )
 
 static void read_from_vram( void )
 {
+	u8 ctr1;
+
     //first time read
     //return a dummy value
     if ( first_time )
@@ -260,8 +264,18 @@ static void read_from_vram( void )
 
     memory[PPU_DATA] = ppu_mm_get( ppu_addr );
 
-    //increace pointer
-    ++ppu_addr;
+	//do increacement
+	mm_get(PPU_CTRL_REG1, ctr1);
+	if (ctr1 & 0x4)
+	{
+		memory[PPU_ADDRESS] += 32;
+		ppu_addr += 32;
+	}
+	else
+	{
+		++memory[PPU_ADDRESS];
+		++ppu_addr;
+	}
 }
 
 
@@ -1597,7 +1611,7 @@ void cpu_reset( void )
     cpu_mm_read( 0xfffc, (u8 *)&regs.PC, sizeof ( regs.PC ));
 }
 
-u32  cpu_execute_translate( s32 n_cycles )
+u32  cpu_execute_translate( u32 n_cycles )
 {
     u8 opcode;
     u8 bytes = 0;
@@ -1999,8 +2013,14 @@ void cpu_mm_write( u16 addr, u8 *buf, u16 len )
         {
         case 0x1:
             mapper1_handler( addr, *buf );
-
-        default:
+			break;
+		case 0x2:
+			mapper2_handler(addr, *buf);
+			break;
+		case 0x3:
+			mapper3_handler(addr, *buf);
+			break;
+		default:
             break;
         }
 

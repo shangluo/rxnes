@@ -46,18 +46,24 @@ void ines_loadrom( char *filename )
     c_rom->prg_banks = ( u8 * )malloc ( 16 * 1024 * header.prg_rom );
     fread( c_rom->prg_banks, 16 * 1024 * header.prg_rom, 1, fp );
 
-    c_rom->chr_banks = ( u8 * )malloc ( 8 * 1024 * header.chr_rom );
-    fread( c_rom->chr_banks, 8 * 1024 * header.chr_rom, 1, fp );
-
-    //load game
+	//load game
     //first to 0x8000
     memcpy( memory + 0x8000, c_rom->prg_banks, 16 * 1024 );
 
     //last to 0xc000
     memcpy( memory + 0xc000, ( c_rom->prg_banks ) + ( header.prg_rom - 1 ) * 16 * 1024 , 16 * 1024 );
 
-    //load vram
-    memcpy( vram, c_rom->chr_banks, 8 * 1024 * 1 );
+	if (c_rom->chr_cnt > 0)
+	{
+		c_rom->chr_banks = (u8 *)malloc(8 * 1024 * header.chr_rom);
+		fread(c_rom->chr_banks, 8 * 1024 * header.chr_rom, 1, fp);
+		//load vram
+	    memcpy( vram, c_rom->chr_banks, 8 * 1024 * 1 );
+	}
+	else
+	{
+		c_rom->chr_banks = NULL;
+	}
 
     fclose( fp );
 }

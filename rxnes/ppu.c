@@ -116,7 +116,7 @@ void ppu_init_attribute_index( void )
 u16 palette[64];
 
 //current scanline
-static u16 cur_scanline;
+/*static*/ u16 cur_scanline;
 static u8 cur_vline;
 
 typedef u8 tile[8][8];
@@ -171,7 +171,6 @@ void ppu_build_tiles( void )
     //
     u8 line[8];
 
-    //fucking complicated! damn
     for ( i = 0; i < 2; ++i )
     {
         for ( j = 0; j < 0x100; ++j )
@@ -215,6 +214,11 @@ void ppu_reset( void )
 
 void ppu_mm_write( u16 addr, u8 data )
 {
+	if (addr < 0x2000)
+	{
+		ppu_build_tiles();
+	}
+
     //use internal access to memory
     //write to vram
     //notice it's mirrored
@@ -237,7 +241,7 @@ void ppu_mm_write( u16 addr, u8 data )
                 addr == 0x3f08 ||
                 addr == 0x3f0c
            )
-        {
+        {	
             vram[ addr + 0x10 ] = vram[ addr ];
         }
         goto done;
@@ -255,47 +259,48 @@ void ppu_mm_write( u16 addr, u8 data )
         goto done;
     }
 
-    //Vertical
-    if ( mirror )
-    {
-        if ( ( addr >= 0x2000 && addr <  0x2400 ) ||
-                ( addr >= 0x2400 && addr <= 0x2800 ) )
-        {
-            vram[ addr + 0x800 ] = vram[ addr ];
-            vram[ addr + 0x1000 ] = vram[ addr ];
+	//Vertical
+	if (mirror)
+	{
+		if ((addr >= 0x2000 && addr <  0x2400) ||
+			(addr >= 0x2400 && addr <= 0x2800))
+		{
+			vram[addr + 0x800] = vram[addr];
+			vram[addr + 0x1000] = vram[addr];
 
-            if (  addr + 0x800 + 0x1000 < 0x3f00 )
-                vram[ addr + 0x800 + 0x1000 ] = vram[ addr ];
-        }
-        else if ( addr >= 0x2800 && addr < 0x3000 )
-        {
-            vram[ addr - 0x800 ] = vram[ addr ];
-            vram[ addr + 0x1000 ] = vram[ addr ];
-            vram[ addr -0x800 + 0x1000 ] = vram[ addr ];
+			if (addr + 0x800 + 0x1000 < 0x3f00)
+				vram[addr + 0x800 + 0x1000] = vram[addr];
+		}
+		else if (addr >= 0x2800 && addr < 0x3000)
+		{
+			vram[addr - 0x800] = vram[addr];
+			vram[addr + 0x1000] = vram[addr];
+			vram[addr - 0x800 + 0x1000] = vram[addr];
 
-            if (  addr + 0x800 + 0x1000 < 0x3f00 )
-                vram[ addr + 0x800 + 0x1000 ] = vram[ addr ];
-        }
-    }
-    else
-    {
-        if ( ( addr >= 0x2000 && addr <  0x2400 ) ||
-                ( addr >= 0x2800 && addr <= 0x2c00 ) )
-        {
-            vram[ addr + 0x400 ] = vram[ addr ];
-            vram[ addr + 0x1000 ] = vram[ addr ];
-            if (  addr + 0x400 + 0x1000 < 0x3f00 )
-                vram[ addr + 0x400 + 0x1000 ] = vram[ addr ];
-        }
-        else if ( ( addr >= 0x2400 && addr < 0x2800 ) ||
-                  ( addr >= 0x2c00 && addr < 0x3000 ) )
-        {
-            vram[ addr - 0x400 ] = vram[ addr ];
-            vram[ addr + 0x1000 ] = vram[ addr ];
-            if (  addr - 0x400 + 0x1000 < 0x3f00 )
-                vram[ addr + 0x400 + 0x1000 ] = vram[ addr ];
-        }
-    }
+			if (addr + 0x800 + 0x1000 < 0x3f00)
+				vram[addr + 0x800 + 0x1000] = vram[addr];
+		}
+	}
+	else
+	{
+		if ((addr >= 0x2000 && addr <  0x2400) ||
+			(addr >= 0x2800 && addr <= 0x2c00))
+		{
+			vram[addr + 0x400] = vram[addr];
+			vram[addr + 0x1000] = vram[addr];
+			if (addr + 0x400 + 0x1000 < 0x3f00)
+				vram[addr + 0x400 + 0x1000] = vram[addr];
+		}
+		else if ((addr >= 0x2400 && addr < 0x2800) ||
+			(addr >= 0x2c00 && addr < 0x3000))
+		{
+			vram[addr - 0x400] = vram[addr];
+			vram[addr + 0x1000] = vram[addr];
+			if (addr - 0x400 + 0x1000 < 0x3f00)
+				vram[addr + 0x400 + 0x1000] = vram[addr];
+		}
+	}
+
 
 done:
     vram[ addr + 0x4000 ] = memory[PPU_DATA];
@@ -310,14 +315,24 @@ u8 ppu_mm_get( u16 addr )
 static u8 ppu_fill_current_oam( u16 scanline, u8 *oam_tmp )
 {
     u8 *ptr = oam;
+	u8 spr_height;
     int cnt = 0;
+
+	if (memory[PPU_CTRL_REG1] & 0x20)
+	{
+		spr_height = 16;
+	}
+	else
+	{
+		spr_height = 8;
+	}
 
     for ( ; cnt < 8 && ptr < oam + 0x100; ptr += 4 )
     {
         if ( *ptr > 239 )
             continue;
 
-        if ( scanline >= ( *ptr - 1 ) && scanline <= ( *ptr - 1 + 7 ) )
+        if ( scanline >= ( *ptr - 1 ) && scanline <= ( *ptr - 1 + (spr_height - 1) ) )
         {
             memcpy( oam_tmp + cnt * 4  , ptr, 4 );
             cnt++;
@@ -342,8 +357,9 @@ u32 ppu_render_scanline( u32 n_cycles )
     u8 attribute_index, attribute;
     u8 set = 0;
     u8 spr_x, spr_y;
-    u16 spr_c;
-
+	u8 sprite_height;
+	u8 spr_mask;
+	u16 real_line = ( cam_y + cur_scanline ) % 240; // wrap y value
 
     b_line = line;
     n_line = line + 256;
@@ -416,8 +432,8 @@ u32 ppu_render_scanline( u32 n_cycles )
         }
 
         //draw background
-        r = cur_scanline / 8;
-        idx = cur_scanline % 8;
+        r = real_line / 8;
+        idx = real_line % 8;
 
         for ( c = 0; c < 32; ++c )
         {
@@ -489,17 +505,35 @@ u32 ppu_render_scanline( u32 n_cycles )
             }
         }
 
-        //draw sprite
-
+        // draw sprite
+		// if ppu draw sprite bits disabled, goto finish
         if ( !( memory[PPU_CTRL_REG2] & 0x10 ) )
             goto finish;
+
+		if (memory[PPU_CTRL_REG1] & 0x20)
+		{
+			spr_mask = 0xfe; // ignore last bit as band selector
+			sprite_height = 16;
+		}
+		else
+		{
+			spr_mask = 0xff;
+			sprite_height = 8;
+		}
 
         for ( i = 0; i < cnt; ++i )
         {
             spr_y = oam_tmp[i][0];
             attribute = oam_tmp[i][2];
             spr_x = oam_tmp[i][3];
-            sprite = &tiles[sprite_tile][ oam_tmp[i][1] ];
+
+			if (sprite_height == 16)
+			{
+				sprite_tile = oam_tmp[i][1] & 0x1;
+			}
+
+
+            sprite = &tiles[sprite_tile][ oam_tmp[i][1] & spr_mask];
             idx = cur_scanline - spr_y  + 1;
 
             set = attribute & 0x3;
@@ -511,7 +545,7 @@ u32 ppu_render_scanline( u32 n_cycles )
                     if ( (*sprite)[idx][ 7 - j] != 0 )
                     {
                         sprite0_hit = 1;
-                        hit_line = cur_scanline + 7 - idx;
+                        hit_line = cur_scanline + (sprite_height - 1) - idx;
                         break;
                     }
                 }
@@ -533,8 +567,8 @@ u32 ppu_render_scanline( u32 n_cycles )
                         break;
 
                     case 0xc0:
-                        if ( (*sprite)[7 - idx][j] != 0 )
-                            *( line + cam_x + spr_x + j ) = palette[ (vram+0x3f10)[( set << 2 | (*sprite)[7 - idx][j] ) ] ];
+                        if ( (*sprite)[sprite_height - 1 - idx][j] != 0 )
+                            *( line + cam_x + spr_x + j ) = palette[ (vram+0x3f10)[( set << 2 | (*sprite)[sprite_height - 1 - idx][j] ) ] ];
 
                         break;
                         //flip h
@@ -543,8 +577,8 @@ u32 ppu_render_scanline( u32 n_cycles )
                             *( line + cam_x + spr_x + j ) = palette[ (vram+0x3f10)[( set << 2 | (*sprite)[idx][j] ) ] ];
                         break;
                     case 0x80:
-                        if ( (*sprite)[7 - idx][7 - j] != 0 )
-                            *( line + cam_x + spr_x + j ) = palette[ (vram+0x3f10)[( set << 2 | (*sprite)[7 - idx][7 - j] ) ] ];
+                        if ( (*sprite)[sprite_height - 1 - idx][7 - j] != 0 )
+                            *( line + cam_x + spr_x + j ) = palette[ (vram+0x3f10)[( set << 2 | (*sprite)[sprite_height - 1 - idx][7 - j] ) ] ];
                         break;
                     }
                 }
