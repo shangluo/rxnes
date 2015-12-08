@@ -16,6 +16,7 @@ void ppu_build_tiles( void );
 u32  ppu_render_scanline( u32 n_cycles );
 void ppu_mm_write( u16 addr, u8 data );
 u8 ppu_mm_get( u16 addr );
+void ppu_fill_nametable(u8 *bits, int index);
 
 //ppu registers
 #define PPU_CTRL_REG1   0x2000

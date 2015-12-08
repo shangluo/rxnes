@@ -54,14 +54,16 @@ void mapper1_handler( u16 addr, u8 data )
         else if ( addr >= 0xa000 && addr <= 0xbfff )
         {
             chr_bank0 = load_register;
-
-            if ( !( cotrol_register & 0x10 ) )
-            {
-                memcpy( vram , c_rom->chr_banks + ( chr_bank0 & 0x1e ) * 1024 * 8, 1024 * 8 );
-            } else
-            {
-                memcpy( vram , c_rom->chr_banks + chr_bank0 * 1024 * 4, 1024 * 4 );
-            }
+			if (c_rom->chr_cnt > 0)
+			{
+				if ( !( cotrol_register & 0x10 ) )
+				{
+					memcpy( vram , c_rom->chr_banks + ( chr_bank0 & 0x1e ) * 1024 * 8, 1024 * 8 );
+				} else
+				{
+					memcpy( vram , c_rom->chr_banks + chr_bank0 * 1024 * 4, 1024 * 4 );
+				}
+			}
 
             //rebuild tiles
             ppu_build_tiles();
@@ -86,24 +88,22 @@ void mapper1_handler( u16 addr, u8 data )
         //prg_bank
         else if ( addr >= 0xe000 && addr <= 0xffff )
         {
-            prg_bank = load_register;
+            prg_bank = load_register & 0x0f;
 
             switch ( cotrol_register & 0x0c )
             {
             case 0x0:
             case 0x4:
                 //switch 32, igore low bit
-                memcpy( memory + 0x8000, c_rom->prg_banks + ( prg_bank & 0x1e ) * 1024 * 32, 1024 * 32 );
+                memcpy( memory + 0x8000, c_rom->prg_banks + ( prg_bank & 0x0e ) * 1024 * 32, 1024 * 32 );
                 break;
 
             case 0x8:
-                memcpy( memory + 0x8000, c_rom->prg_banks, 1024 * 16 );
                 memcpy( memory + 0xc000, c_rom->prg_banks + prg_bank * 1024 * 16, 1024 * 16 );
                 break;
 
             case 0xc:
                 memcpy( memory + 0x8000, c_rom->prg_banks + prg_bank * 1024 * 16, 1024 * 16 );
-                memcpy( memory + 0xc000, c_rom->prg_banks + ( c_rom->prg_cnt - 1 ) * 1024 * 16, 1024 * 16 );
                 break;
             }
 

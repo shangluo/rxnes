@@ -10,7 +10,6 @@
 //internal registers
 u16 v;
 u16 t;
-u16 fine_x;
 u8 cam_x, cam_y;
 u8 sprite0_hit;
 u8 hit_line;
@@ -283,21 +282,21 @@ void ppu_mm_write( u16 addr, u8 data )
 	}
 	else
 	{
-		if ((addr >= 0x2000 && addr <  0x2400) ||
-			(addr >= 0x2800 && addr <= 0x2c00))
+		if (addr >= 0x2000 && addr <  0x2400 || 
+			addr >= 0x2800 && addr <  0x2c00)
 		{
 			vram[addr + 0x400] = vram[addr];
 			vram[addr + 0x1000] = vram[addr];
 			if (addr + 0x400 + 0x1000 < 0x3f00)
-				vram[addr + 0x400 + 0x1000] = vram[addr];
+				vram[addr + 0x800 + 0x1000] = vram[addr];
 		}
-		else if ((addr >= 0x2400 && addr < 0x2800) ||
-			(addr >= 0x2c00 && addr < 0x3000))
+		else if (addr >= 0x2400 && addr < 0x2800 ||
+			addr >= 0x2c00 && addr <  0x3000)
 		{
 			vram[addr - 0x400] = vram[addr];
 			vram[addr + 0x1000] = vram[addr];
 			if (addr - 0x400 + 0x1000 < 0x3f00)
-				vram[addr + 0x400 + 0x1000] = vram[addr];
+				vram[addr - 0x400 + 0x1000] = vram[addr];
 		}
 	}
 
@@ -312,7 +311,7 @@ u8 ppu_mm_get( u16 addr )
 }
 
 
-static u8 ppu_fill_current_oam( u16 scanline, u8 *oam_tmp )
+static u8 ppu_fill_current_oam( u16 scanline, u8 *oam_tmp, u8 *sprite_index )
 {
     u8 *ptr = oam;
 	u8 spr_height;
@@ -335,6 +334,7 @@ static u8 ppu_fill_current_oam( u16 scanline, u8 *oam_tmp )
         if ( scanline >= ( *ptr - 1 ) && scanline <= ( *ptr - 1 + (spr_height - 1) ) )
         {
             memcpy( oam_tmp + cnt * 4  , ptr, 4 );
+			*sprite_index++ = (ptr - oam) / 4;
             cnt++;
         }
     }
@@ -347,8 +347,9 @@ u32 ppu_render_scanline( u32 n_cycles )
     int cnt;
     int r, c;
     int i, j, idx;
-    u8 oam_tmp[8][4];
-    u8 *base_nt, *next_nt;
+	u8 oam_tmp[8][4];
+	u8 spr_index[8];
+	u8 *base_nt, *next_nt;
     u8 *base_attr, *next_attr;
     u8 bg_tile, sprite_tile;
     tile *bg, *sprite;
@@ -365,7 +366,7 @@ u32 ppu_render_scanline( u32 n_cycles )
     n_line = line + 256;
 
     //background disable
-    if ( !( memory[PPU_CTRL_REG2] & 0x04 ) )
+    if ( !( memory[PPU_CTRL_REG2] & 0x08 ) )
     {
         memset( &screen[cur_scanline], 0, 256 * 2 );
         goto finish;
@@ -397,15 +398,19 @@ u32 ppu_render_scanline( u32 n_cycles )
         break;
     }
 
+	// vertial scrolling
+	if (!mirror && cam_y + cur_scanline >= 240)
+	{
+		base_nt += 0x800;
+		if (base_nt - vram >= 0x3000)
+		{
+			base_nt -= 0x1000;
+		}
+	}
+
     base_attr = base_nt + 0x3c0;
 
-    if ( mirror )
-    {
-        next_nt = base_nt + 0x400;
-    }
-    else
-        next_nt = base_nt + 0x800;
-
+    next_nt = base_nt + 0x400;
     next_attr = next_nt + 0x3c0;
 
     if ( memory[PPU_CTRL_REG1] & 0x10 )
@@ -424,7 +429,7 @@ u32 ppu_render_scanline( u32 n_cycles )
 
     if ( cur_scanline >= 0 && cur_scanline <= 240 )
     {
-        cnt = ppu_fill_current_oam( cur_scanline, (u8 *)oam_tmp );
+        cnt = ppu_fill_current_oam( cur_scanline, (u8 *)oam_tmp, spr_index);
 
         if ( cnt >= 8 )
         {
@@ -538,11 +543,11 @@ u32 ppu_render_scanline( u32 n_cycles )
 
             set = attribute & 0x3;
 
-            if ( !sprite0_hit )
+            if ( !sprite0_hit && spr_index[i] == 0)
             {
                 for ( j = 0; j < 8; ++j )
                 {
-                    if ( (*sprite)[idx][ 7 - j] != 0 )
+                    if ( (*sprite)[idx][ 7 - j] != 0  && *(line + cam_x + spr_x + 7 - j) != palette[vram[0x3f00]])
                     {
                         sprite0_hit = 1;
                         hit_line = cur_scanline + (sprite_height - 1) - idx;
@@ -584,11 +589,12 @@ u32 ppu_render_scanline( u32 n_cycles )
                 }
             }
         }
-        //draw back
-        memcpy( &screen[cur_scanline], line + fine_x , 256 * 2 );
     }
 
 finish:
+	
+	//draw back
+	memcpy( &screen[cur_scanline], line + cam_x, 256 * 2 );
 
     if ( cur_scanline == 0 )
     {
@@ -606,4 +612,93 @@ finish:
     cur_scanline = ( cur_scanline + 1 ) % 240;
 
     return 1;
+}
+
+void ppu_fill_nametable(u8 *bits, int index)
+{
+	int r, c;
+	int i, idx;
+	u8 *base_nt;
+	u8 *base_attr;
+	u8 bg_tile;
+	tile *bg;
+	u16 line[256];
+	u8 attribute_index, attribute;
+	u8 set = 0;
+	u16 scan_line;
+
+	for (scan_line = 0; scan_line < 240; ++scan_line)
+	{
+		//base name tables
+		switch (index)
+		{
+		case 0x0:
+			base_nt = vram + 0x2000;
+			break;
+
+		case 0x1:
+			base_nt = vram + 0x2400;
+			break;
+
+		case 0x2:
+			base_nt = vram + 0x2800;
+			break;
+
+		case 0x3:
+			base_nt = vram + 0x2c00;
+			break;
+		}
+
+		base_attr = base_nt + 0x3c0;
+
+		if (memory[PPU_CTRL_REG1] & 0x10)
+		{
+			bg_tile = 1;
+		}
+		else
+			bg_tile = 0;
+
+		//draw background
+		r = scan_line / 8;
+		idx = scan_line % 8;
+
+		for (c = 0; c < 32; ++c)
+		{
+			bg = &tiles[bg_tile][*(base_nt + r * 32 + c)];
+
+
+			//get crospondding attribute table
+			attribute = base_attr[attribute_table[r][c]];
+			attribute_index = attribute_index_table[r][c];
+
+			switch (attribute_index)
+			{
+			case 0x0:
+				set = attribute & 0x3;
+				break;
+
+			case 0x1:
+				set = (attribute & 0xc) >> 2;
+				break;
+
+			case 0x2:
+				set = (attribute & 0x30) >> 4;
+				break;
+
+			case 0x3:
+				set = (attribute & 0xc0) >> 6;
+				break;
+			}
+
+
+			for (i = 0; i < 8; ++i)
+			{
+				*(line + 8 * c + 7 - i) = palette[(vram + 0x3f00)[(*bg)[idx][i] ? (set * 4 + (*bg)[idx][i]) : (*bg)[idx][i]]];
+			}
+		}
+
+		//draw back
+		memcpy(bits, line, sizeof(line));
+		bits += sizeof(line);
+	}
 }

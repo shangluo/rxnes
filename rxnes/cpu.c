@@ -33,7 +33,7 @@ static u8 spr_addr;
 extern u8 mirror;
 
 //ppu position
-extern u8 cam_x, cam_y, fine_x;
+extern u8 cam_x, cam_y;
 u32 cpu_cycles;
 
 //mapper function
@@ -561,8 +561,9 @@ static u8 BRK()
 
     push( regs.FLAGS );
 
-    setflag( IF, 1 );
-    setflag( BF, 1 );
+    setflag(IF, 1);
+	setflag(BF, 1);
+	setflag(RF, 1);
 
     //jmp
     cpu_mm_read( 0xfffe, (u8 *)&regs.PC, sizeof ( regs.PC ) );
@@ -1193,9 +1194,10 @@ static u8 PHA()
 
 static u8 PHP()
 {
-    push( regs.FLAGS );
-
-    return 1;
+	setflag(BF, 1);
+	setflag(RF, 1);
+	push( regs.FLAGS );
+	return 1;
 }
 
 static u8 PLA()
@@ -1985,17 +1987,17 @@ u32  cpu_execute_translate( u32 n_cycles )
 
 void push( u8 data )
 {
-    regs.SP = regs.SP - 1;
 //  cpu_mm_write( data, 0x100 + regs.SP );
     mm_set( 0x100 + regs.SP, data );
+    regs.SP = regs.SP - 1;
 //  LOG_TRACE( "PUSH", "%X", data );
 }
 
 u8 pop()
 {
     u8 bytes = 0;
-    mm_get( regs.SP + 0x100, bytes );
     regs.SP += 1;
+    mm_get( regs.SP + 0x100, bytes );
 
 //  LOG_TRACE( "POP", "%X", bytes );
     return bytes;
@@ -2095,8 +2097,6 @@ void cpu_handle_io( u16 reg )
         } else
         {
             cam_x = memory[PPU_SCROLL_REG];
-//          fine_x = ( fine_x + cam_x ) % 256;
-            fine_x = cam_x;
         }
         b_tongle = ( b_tongle + 1 ) % 2;
         break;
@@ -2202,4 +2202,658 @@ void cpu_test( void )
     mm_get(0x0, d);
     mm_get(0x2, d);
     mm_get(0x3, d);
+}
+
+typedef enum 
+{
+	Accumulator,
+	Implied,
+	Relative,
+	Immediate,
+	Zero_Page,   
+	Zero_Page_X,
+	Zero_Page_Y,
+	Absolute,
+	Absolute_X, 
+	Absolute_Y,
+	Indirect,
+	Indirect_X,
+	Indirect_Y
+}CPU_ADDRESSING_MODE;
+
+static void cpu_disassemble_format_operand(CPU_ADDRESSING_MODE mode, u16 operand,char *buf, int len)
+{
+	switch (mode)
+	{
+	case Implied:
+		break;
+	case Accumulator:
+		sprintf(buf, "%s", "A");
+		break;
+	case Immediate:
+		sprintf(buf, "#$%X", operand);
+		break;
+	case Relative:
+		sprintf(buf, "$%X", operand);
+		break;
+	case Zero_Page:
+		sprintf(buf, "$%X", operand);
+		break;
+	case Zero_Page_X:
+		sprintf(buf, "$%X, X", operand);
+		break;
+	case Zero_Page_Y:
+		sprintf(buf, "$%X, Y", operand);
+		break;
+	case Absolute:
+		sprintf(buf, "$%X", operand);
+		break;
+	case Absolute_X:
+		sprintf(buf, "$%X, X", operand);
+		break;
+	case Absolute_Y:
+		sprintf(buf, "$%X, Y", operand);
+		break;
+	case Indirect:
+		sprintf(buf, "($%X)", operand);
+		break;
+	case Indirect_X:
+		sprintf(buf, "($%X, X)", operand);
+		break;
+	case Indirect_Y:
+		sprintf(buf, "($%X, Y)", operand);
+		break;
+	default:
+		break;
+	}
+}
+
+static u8 cpu_disassemble_intruction_internal(u16 addr, char *instruction, CPU_ADDRESSING_MODE mode, char *buf, int len)
+{
+	u16 bytes = 1;
+	u16 operand = 0;
+	char operand_buf[20];
+	memset(operand_buf, 0, sizeof(operand_buf));
+	switch (mode)
+	{
+	case Implied:
+	case Accumulator:
+		bytes = 1;
+		break;
+	case Immediate:
+	case Relative:
+	case Zero_Page:
+	case Zero_Page_X:
+	case Zero_Page_Y:
+	case Indirect_X:
+	case Indirect_Y:
+		operand = memory[addr + 1];
+		bytes = 2;
+		break;
+	case Indirect:
+	case Absolute:
+	case Absolute_X:
+	case Absolute_Y:
+		memcpy(&operand, memory + addr + 1, 2);
+		bytes = 3;
+		break;
+	default:
+		break;
+	}
+	
+	cpu_disassemble_format_operand(mode, operand, operand_buf, 20);
+	if (operand_buf[0])
+		sprintf(buf, "%s   %s", instruction, operand_buf);
+	else
+		strcpy(buf, instruction);
+	return bytes;
+}
+
+u8 cpu_disassemble_intruction(u16 addr, char *buf, int len)
+{
+	u8 opcode;
+	u8 data;
+	u8 bytes = 0;
+
+	memset(buf, 0, len);
+
+	//fetch one opcode
+	opcode = memory[addr];
+
+	switch (opcode)
+	{
+	case 0x00:
+		bytes = cpu_disassemble_intruction_internal(addr, "BRK", Implied, buf, len);
+		break;
+
+	case 0x01:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Indirect_X, buf, len);
+		break;
+	case 0x05:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Zero_Page, buf, len);
+		break;
+	case 0x09:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Immediate, buf, len);
+		break;
+	case 0x0d:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Absolute, buf, len);
+		break;
+	case 0x11:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Indirect_Y, buf, len);
+		break;
+	case 0x15:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Zero_Page_X, buf, len);
+		break;
+	case 0x19:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Absolute_Y, buf, len);
+		break;
+	case 0x1d:
+		bytes = cpu_disassemble_intruction_internal(addr, "ORA", Absolute_X, buf, len);
+		break;
+
+	case 0x06:
+		bytes = cpu_disassemble_intruction_internal(addr, "ASL", Zero_Page, buf, len);
+		break;
+	case 0x0a:
+		bytes = cpu_disassemble_intruction_internal(addr, "ASL", Accumulator, buf, len);
+		break;
+	case 0x0e:
+		bytes = cpu_disassemble_intruction_internal(addr, "ASL", Absolute, buf, len);
+		break;
+	case 0x16:
+		bytes = cpu_disassemble_intruction_internal(addr, "ASL", Zero_Page_X, buf, len);
+		break;
+	case 0x1e:
+		bytes = cpu_disassemble_intruction_internal(addr, "ASL", Absolute_X, buf, len);
+		break;
+
+	case 0x08:
+		bytes = cpu_disassemble_intruction_internal(addr, "PHP", Implied, buf, len);
+		break;
+
+	case 0x10:
+		bytes = cpu_disassemble_intruction_internal(addr, "BPL", Relative, buf, len);
+		break;
+
+	case 0x18:
+		bytes = cpu_disassemble_intruction_internal(addr, "CLC", Implied, buf, len);
+		break;
+
+	case 0x20:
+		bytes = cpu_disassemble_intruction_internal(addr, "JSR", Absolute, buf, len);
+		break;
+
+	case 0x21:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Indirect_X, buf, len);
+		break;
+	case 0x25:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Zero_Page, buf, len);
+		break;
+	case 0x29:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Immediate, buf, len);
+		break;
+	case 0x2d:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Absolute, buf, len);
+		break;
+	case 0x31:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Indirect_Y, buf, len);
+		break;
+	case 0x35:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Zero_Page_X, buf, len);
+		break;
+	case 0x39:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Absolute_Y, buf, len);
+		break;
+	case 0x3d:
+		bytes = cpu_disassemble_intruction_internal(addr, "AND", Absolute_X, buf, len);
+		break;
+
+	case 0x24:
+		bytes = cpu_disassemble_intruction_internal(addr, "BIT", Zero_Page, buf, len);
+		break;
+	case 0x2c:
+		bytes = cpu_disassemble_intruction_internal(addr, "BIT", Absolute, buf, len);
+		break;
+
+	case 0x26:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROL", Zero_Page, buf, len);
+		break;
+	case 0x2a:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROL", Accumulator, buf, len);
+		break;
+	case 0x2e:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROL", Absolute, buf, len);
+		break;
+	case 0x36:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROL", Zero_Page_X, buf, len);
+		break;
+	case 0x3e:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROL", Absolute_X, buf, len);
+		break;
+
+	case 0x28:
+		bytes = cpu_disassemble_intruction_internal(addr, "PLP", Implied, buf, len);
+		break;
+
+	case 0x30:
+		bytes = cpu_disassemble_intruction_internal(addr, "BMI", Relative, buf, len);
+		break;
+
+	case 0x38:
+		bytes = cpu_disassemble_intruction_internal(addr, "SEC", Implied, buf, len);
+		break;
+
+	case 0x40:
+		bytes = cpu_disassemble_intruction_internal(addr, "RTI", Implied, buf, len);
+		break;
+
+	case 0x41:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Indirect_X, buf, len);
+		break;
+	case 0x45:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Zero_Page, buf, len);
+		break;
+	case 0x49:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Immediate, buf, len);
+		break;
+	case 0x4d:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Absolute, buf, len);
+		break;
+	case 0x51:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Indirect_Y, buf, len);
+		break;
+	case 0x55:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Zero_Page_X, buf, len);
+		break;
+	case 0x59:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Absolute_Y, buf, len);
+		break;
+	case 0x5d:
+		bytes = cpu_disassemble_intruction_internal(addr, "EOR", Absolute_X, buf, len);
+		break;
+
+
+	case 0x46:
+		bytes = cpu_disassemble_intruction_internal(addr, "LSR", Zero_Page, buf, len);
+		break;
+	case 0x4a:
+		bytes = cpu_disassemble_intruction_internal(addr, "LSR", Accumulator, buf, len);
+		break;
+	case 0x4e:
+		bytes = cpu_disassemble_intruction_internal(addr, "LSR", Absolute, buf, len);
+		break;
+	case 0x56:
+		bytes = cpu_disassemble_intruction_internal(addr, "LSR", Zero_Page_X, buf, len);
+		break;
+	case 0x5e:
+		bytes = cpu_disassemble_intruction_internal(addr, "LSR", Absolute_X, buf, len);
+		break;
+
+	case 0x48:
+		bytes = cpu_disassemble_intruction_internal(addr, "PHA", Implied, buf, len);
+		break;
+
+	case 0x4c:
+		bytes = cpu_disassemble_intruction_internal(addr, "JMP", Absolute, buf, len);
+		break;
+	case 0x6c:
+		bytes = cpu_disassemble_intruction_internal(addr, "JMP", Indirect, buf, len);
+		break;
+
+	case 0x50:
+		bytes = cpu_disassemble_intruction_internal(addr, "BVC", Relative, buf, len);
+		break;
+
+	case 0x58:
+		bytes = cpu_disassemble_intruction_internal(addr, "CLI", Implied, buf, len);
+		break;
+
+	case 0x60:
+		bytes = cpu_disassemble_intruction_internal(addr, "RTS", Implied, buf, len);
+		break;
+
+	case 0x61:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Indirect_X, buf, len);
+		break;
+	case 0x65:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Zero_Page, buf, len);
+		break;
+	case 0x69:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Immediate, buf, len);
+		break;
+	case 0x6d:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Absolute, buf, len);
+		break;
+	case 0x71:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Indirect_Y, buf, len);
+		break;
+	case 0x75:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Zero_Page_X, buf, len);
+		break;
+	case 0x79:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Absolute_Y, buf, len);
+		break;
+	case 0x7d:
+		bytes = cpu_disassemble_intruction_internal(addr, "ADC", Absolute_X, buf, len);
+		break;
+
+	case 0x66:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROR", Zero_Page, buf, len);
+		break;
+	case 0x6a:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROR", Accumulator, buf, len);
+		break;
+	case 0x6e:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROR", Absolute, buf, len);
+		break;
+	case 0x76:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROR", Zero_Page_X, buf, len);
+		break;
+	case 0x7e:
+		bytes = cpu_disassemble_intruction_internal(addr, "ROR", Absolute_X, buf, len);
+		break;
+
+	case 0x68:
+		bytes = cpu_disassemble_intruction_internal(addr, "PLA", Implied, buf, len);
+		break;
+
+	case 0x70:
+		bytes = cpu_disassemble_intruction_internal(addr, "BVS", Relative, buf, len);
+		break;
+
+
+	case 0x78:
+		bytes = cpu_disassemble_intruction_internal(addr, "SEI", Implied, buf, len);
+		break;
+
+	case 0x81:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Indirect_X, buf, len);
+		break;
+	case 0x85:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Zero_Page, buf, len);
+		break;
+	case 0x8d:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Absolute, buf, len);
+		break;
+	case 0x91:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Indirect_Y, buf, len);
+		break;
+	case 0x95:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Zero_Page_X, buf, len);
+		break;
+	case 0x99:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Absolute_Y, buf, len);
+		break;
+	case 0x9d:
+		bytes = cpu_disassemble_intruction_internal(addr, "STA", Absolute_X, buf, len);
+		break;
+
+
+	case 0x84:
+		bytes = cpu_disassemble_intruction_internal(addr, "STY", Zero_Page, buf, len);
+		break;
+	case 0x94:
+		bytes = cpu_disassemble_intruction_internal(addr, "STY", Zero_Page_X, buf, len);
+		break;
+	case 0x8c:
+		bytes = cpu_disassemble_intruction_internal(addr, "STY", Absolute, buf, len);
+		break;
+
+	case 0x86:
+		bytes = cpu_disassemble_intruction_internal(addr, "STX", Zero_Page, buf, len);
+		break;
+	case 0x96:
+		bytes = cpu_disassemble_intruction_internal(addr, "STX", Zero_Page_Y, buf, len);
+		break;
+	case 0x8e:
+		bytes = cpu_disassemble_intruction_internal(addr, "STX", Absolute, buf, len);
+		break;
+
+
+	case 0x88:
+		bytes = cpu_disassemble_intruction_internal(addr, "DEY", Implied, buf, len);
+		break;
+
+	case 0x8a:
+		bytes = cpu_disassemble_intruction_internal(addr, "TXA", Implied, buf, len);
+		break;
+
+	case 0x90:
+		bytes = cpu_disassemble_intruction_internal(addr, "BCC", Relative, buf, len);
+		break;
+
+
+	case 0x98:
+		bytes = cpu_disassemble_intruction_internal(addr, "TYA", Implied, buf, len);
+		break;
+
+
+	case 0x9a:
+		bytes = cpu_disassemble_intruction_internal(addr, "TXS", Implied, buf, len);
+		break;
+
+	case 0xa0:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDY", Immediate, buf, len);
+		break;
+	case 0xa4:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDY", Zero_Page, buf, len);
+		break;
+	case 0xac:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDY", Absolute, buf, len);
+		break;
+	case 0xb4:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDY", Zero_Page_X, buf, len);
+		break;
+	case 0xbc:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDY", Absolute_X, buf, len);
+		break;
+
+	case 0xa1:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Indirect_X, buf, len);
+		break;
+	case 0xa5:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Zero_Page, buf, len);
+		break;
+	case 0xa9:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Immediate, buf, len);
+		break;
+	case 0xad:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Absolute, buf, len);
+		break;
+	case 0xb1:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Indirect_Y, buf, len);
+		break;
+	case 0xb5:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Zero_Page_X, buf, len);
+		break;
+	case 0xb9:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Absolute_Y, buf, len);
+		break;
+	case 0xbd:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDA", Absolute_X, buf, len);
+		break;
+
+	case 0xa2:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDX", Immediate, buf, len);
+		break;
+	case 0xa6:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDX", Zero_Page, buf, len);
+		break;
+	case 0xae:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDX", Absolute, buf, len);
+		break;
+	case 0xb6:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDX", Zero_Page_Y, buf, len);
+		break;
+	case 0xbe:
+		bytes = cpu_disassemble_intruction_internal(addr, "LDX", Absolute_Y, buf, len);
+		break;
+
+
+	case 0xa8:
+		bytes = cpu_disassemble_intruction_internal(addr, "TAY", Implied, buf, len);
+		break;
+
+
+	case 0xaa:
+		bytes = cpu_disassemble_intruction_internal(addr, "TAX", Implied, buf, len);
+		break;
+
+
+	case 0xb0:
+		bytes = cpu_disassemble_intruction_internal(addr, "BCS", Relative, buf, len);
+		break;
+
+
+	case 0xb8:
+		bytes = cpu_disassemble_intruction_internal(addr, "CLV", Implied, buf, len);
+		break;
+
+
+	case 0xba:
+		bytes = cpu_disassemble_intruction_internal(addr, "TSX", Implied, buf, len);
+		break;
+
+	case 0xc0:
+		bytes = cpu_disassemble_intruction_internal(addr, "CPY", Immediate, buf, len);
+		break;
+	case 0xc4:
+		bytes = cpu_disassemble_intruction_internal(addr, "CPY", Zero_Page, buf, len);
+		break;
+	case 0xcc:
+		bytes = cpu_disassemble_intruction_internal(addr, "CPY", Absolute, buf, len);
+		break;
+
+	case 0xc1:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Indirect_X, buf, len);
+		break;
+	case 0xc5:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Zero_Page, buf, len);
+		break;
+	case 0xc9:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Immediate, buf, len);
+		break;
+	case 0xcd:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Absolute, buf, len);
+		break;
+	case 0xd1:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Indirect_Y, buf, len);
+		break;
+	case 0xd5:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Zero_Page_X, buf, len);
+		break;
+	case 0xd9:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Absolute_Y, buf, len);
+		break;
+	case 0xdd:
+		bytes = cpu_disassemble_intruction_internal(addr, "CMP", Absolute_X, buf, len);
+		break;
+
+	case 0xc6:
+		bytes = cpu_disassemble_intruction_internal(addr, "DEC", Zero_Page, buf, len);
+		break;
+	case 0xce:
+		bytes = cpu_disassemble_intruction_internal(addr, "DEC", Absolute, buf, len);
+		break;
+	case 0xd6:
+		bytes = cpu_disassemble_intruction_internal(addr, "DEC", Zero_Page_X, buf, len);
+		break;
+	case 0xde:
+		bytes = cpu_disassemble_intruction_internal(addr, "DEC", Absolute_X, buf, len);
+		break;
+
+
+	case 0xc8:
+		bytes = cpu_disassemble_intruction_internal(addr, "INY", Implied, buf, len);
+		break;
+
+
+	case 0xca:
+		bytes = cpu_disassemble_intruction_internal(addr, "DEX", Implied, buf, len);
+		break;
+
+
+	case 0xd0:
+		bytes = cpu_disassemble_intruction_internal(addr, "BNE", Relative, buf, len);
+		break;
+
+
+	case 0xd8:
+		bytes = cpu_disassemble_intruction_internal(addr, "CLD", Implied, buf, len);
+		break;
+
+	case 0xe0:
+		bytes = cpu_disassemble_intruction_internal(addr, "CPX", Immediate, buf, len);
+		break;
+	case 0xe4:
+		bytes = cpu_disassemble_intruction_internal(addr, "CPX", Zero_Page, buf, len);
+		break;
+	case 0xec:
+		bytes = cpu_disassemble_intruction_internal(addr, "CPX", Absolute, buf, len);
+		break;
+
+	case 0xe1:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Indirect_X, buf, len);
+		break;
+	case 0xe5:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Zero_Page, buf, len);
+		break;
+	case 0xe9:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Immediate, buf, len);
+		break;
+	case 0xed:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Absolute, buf, len);
+		break;
+	case 0xf1:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Indirect_Y, buf, len);
+		break;
+	case 0xf5:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Zero_Page_X, buf, len);
+		break;
+	case 0xf9:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Absolute_Y, buf, len);
+		break;
+	case 0xfd:
+		bytes = cpu_disassemble_intruction_internal(addr, "SBC", Absolute_X, buf, len);
+		break;
+
+	case 0xe6:
+		bytes = cpu_disassemble_intruction_internal(addr, "INC", Zero_Page, buf, len);
+		break;
+	case 0xee:
+		bytes = cpu_disassemble_intruction_internal(addr, "INC", Absolute, buf, len);
+		break;
+	case 0xf6:
+		bytes = cpu_disassemble_intruction_internal(addr, "INC", Zero_Page_X, buf, len);
+		break;
+	case 0xfe:
+		bytes = cpu_disassemble_intruction_internal(addr, "INC", Absolute_X, buf, len);
+		break;
+
+
+	case 0xe8:
+		bytes = cpu_disassemble_intruction_internal(addr, "INX", Implied, buf, len);
+		break;
+
+
+	case 0xea:
+		bytes = cpu_disassemble_intruction_internal(addr, "NOP", Implied, buf, len);
+		break;
+
+
+	case 0xf0:
+		bytes = cpu_disassemble_intruction_internal(addr, "BEQ", Relative, buf, len);
+		break;
+
+
+	case 0xf8:
+		bytes = cpu_disassemble_intruction_internal(addr, "SED", Implied, buf, len);
+		break;
+
+	default:
+		bytes = 1;
+		break;
+	}
+
+	return bytes;
 }

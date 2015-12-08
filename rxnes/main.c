@@ -9,6 +9,7 @@
 #include <d3d9.h>
 #include <tchar.h>
 #include <dinput.h>
+#include "resource.h"
 
 #pragma comment(lib, "d3d9.lib")
 #pragma comment(lib, "dxguid.lib")
@@ -16,8 +17,7 @@
 
 #define CYCLE_PER_SCANLINE 114
 #define RX_NES_WND_CLASS _T("RXNesWnd")
-
-#define IDM_OPEN_NES_ROM 0x101
+#define RX_NES_NAMETABLE_WND_CLASS _T("RXNesNameTableWnd")
 
 static u16 screen2[480][512];
 
@@ -30,8 +30,8 @@ LPDIRECTINPUT g_pDInput;
 LPDIRECTINPUTDEVICE g_pDInputDevice;
 
 HINSTANCE g_hInstance;
-
-HMENU g_hMenu;
+HWND g_hWndNameTable;
+HWND g_hWndCpuDebugger;
 
 int running;
 int pause;
@@ -116,14 +116,250 @@ void powerup( void )
 	regs.SP = 0xfd;
 }
 
-void CreateMenus(HWND hWnd)
+LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 {
-	HMENU hMenu = CreateMenu();
-	HMENU hMenuFile = CreatePopupMenu();
-	AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hMenuFile, _T("File"));
-	AppendMenu(hMenuFile, MF_STRING, IDM_OPEN_NES_ROM,  _T("Open nes rom"));
+	static int i = 0;
+	static HDC hDC;
+	static HDC hBackgroundDC[4] = { NULL };
+	static HBITMAP hOldBitmap[4] = { NULL };
+	static HBITMAP hBitmap[4] = { NULL };
+	static VOID *pBits[4] = { NULL };
+	static BITMAPINFO bmi = {0};
+	PAINTSTRUCT ps;
+	switch (nMessage)
+	{
+	case WM_CREATE:
+		hDC = GetDC(hWnd);
+		bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+		bmi.bmiHeader.biWidth = 256;
+		bmi.bmiHeader.biHeight = -240;
+		bmi.bmiHeader.biPlanes = 1;
+		bmi.bmiHeader.biBitCount = 16;
+		bmi.bmiHeader.biCompression = BI_RGB; 
+		for (i = 0; i < 4; ++i)
+		{
+			hBackgroundDC[i] = CreateCompatibleDC(hDC);
+			hBitmap[i] = CreateDIBSection(hDC, &bmi, DIB_RGB_COLORS, &pBits[i], NULL, 0);
+			hOldBitmap[i] = SelectObject(hBackgroundDC[i], hBitmap[i]);
+		}
 
-	SetMenu(hWnd, hMenu);
+		ReleaseDC(hWnd, hDC);
+
+		SetTimer(hWnd, 1, 30, NULL);
+
+	case WM_PAINT:
+		hDC = BeginPaint(hWnd, &ps);
+		for (i = 0; i < 4; ++i)
+		{
+			BitBlt(hDC, 256 * (i & 0x1), 240 * ( i >> 1), 256 , 240, hBackgroundDC[i], 0, 0, SRCCOPY);
+		}
+		EndPaint(hWnd, &ps);
+		break;
+
+	case WM_TIMER:
+		for (i = 0; i < 4; ++i)
+		{
+			ppu_fill_nametable(pBits[i], i);
+		}
+		InvalidateRect(hWnd, NULL, FALSE);
+		break;
+
+	case WM_DESTROY:
+		for (i = 0; i < 4; ++i)
+		{
+			SelectObject(hBackgroundDC[i], hOldBitmap[i]);
+			DeleteObject(hBitmap[i]);
+			DeleteDC(hBackgroundDC[i]);
+		}
+		g_hWndNameTable = NULL;
+
+		break;
+		 
+	default:
+		break;
+	}
+
+	return DefWindowProc(hWnd, nMessage, wParam, lParam);
+}
+
+HWND CreateNameTableWnd()
+{
+	WNDCLASS wndClass;
+
+	if (!GetClassInfo(g_hInstance, RX_NES_NAMETABLE_WND_CLASS, &wndClass))
+	{
+		ZeroMemory(&wndClass, sizeof(wndClass));
+		wndClass.hCursor = LoadCursor(NULL, IDC_ARROW);
+		wndClass.hInstance = g_hInstance;
+		wndClass.lpfnWndProc = NameTableWndProc;
+		wndClass.style = CS_VREDRAW | CS_HREDRAW;
+		wndClass.lpszClassName = RX_NES_NAMETABLE_WND_CLASS;
+
+		if (!RegisterClass(&wndClass))
+		{
+			return NULL;
+		}
+	}
+
+	RECT rt;
+	SetRect(&rt, 0, 0, 512, 480);
+	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, FALSE);
+
+	HWND hWnd = CreateWindow(RX_NES_NAMETABLE_WND_CLASS, _T("Name Tables"), WS_OVERLAPPEDWINDOW & (~(WS_SIZEBOX | WS_MAXIMIZEBOX)), CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, g_hInstance, NULL);
+	if (!hWnd)
+	{
+		return NULL;
+	}
+
+	ShowWindow(hWnd, SW_SHOW);
+
+	return hWnd;
+}
+
+INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LPARAM lParam)
+{
+	static HWND hWndInstructionList;
+	static char *disasmblyText;
+	int disasmblyTextLen = 256;
+	if (nMessage == WM_INITDIALOG)
+	{
+		u32 addr = 0xc000;
+
+		if (rom_loaded)
+		{
+			memcpy(&addr, &memory[0xfffc], 2);
+		}
+
+		u8 bytes;
+		char buf[128];
+		char itemText[128];
+		char opcode[128];
+		char tmp[3];
+		int i;
+
+		while (addr <= 0xffff)
+		{
+			bytes = cpu_disassemble_intruction(addr, buf, 128);
+			memset(opcode, 0, 128);
+			for (i = 0; i < bytes; ++i)
+			{
+				if (i != 0)
+				{
+					strcat(opcode, " ");
+				}
+				sprintf(tmp, "%02X", memory[addr + i]);
+				strcat(opcode, tmp);
+			}
+			sprintf(itemText, " %X: %s \t%s\r\n", addr, opcode, buf);
+			addr += bytes;
+			if (!disasmblyText)
+			{
+				disasmblyText = (char *)malloc(disasmblyTextLen);
+				ZeroMemory(disasmblyText, disasmblyTextLen);
+			}
+			
+			while (strlen(disasmblyText) + strlen(itemText) >= disasmblyTextLen)
+			{
+				disasmblyTextLen *= 2;
+				disasmblyText = (char *)realloc(disasmblyText, disasmblyTextLen);
+				if (!disasmblyText)
+				{
+					DebugBreak();
+				}
+			}
+
+			strcat(disasmblyText, itemText);
+
+		}
+		
+		SendDlgItemMessageA(hDlg, IDC_EDIT_DISASSMEBLY, WM_SETTEXT, 0, disasmblyText);
+		SetTimer(hDlg, 1, 30, NULL);
+		return TRUE;
+	}
+	else if (nMessage == WM_TIMER)
+	{
+		TCHAR szText[10];
+
+	#define MODIFY_REG_VALUE(reg_name) \
+		_stprintf(szText, _T("%02X"), regs.##reg_name); \
+		SetDlgItemText(hDlg, IDC_EDIT_REG_##reg_name, szText);
+
+		MODIFY_REG_VALUE(A);
+		MODIFY_REG_VALUE(X);
+		MODIFY_REG_VALUE(Y);
+		MODIFY_REG_VALUE(SP);
+		MODIFY_REG_VALUE(PC);
+#undef MODIFY_REG_VALUE
+
+	#define MODIFY_CHECKBOX(reg_name) \
+		SendDlgItemMessage(hDlg, IDC_CHECK_REG_FLAG_##reg_name, BM_SETCHECK, regs.SR.##reg_name == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+	
+		MODIFY_CHECKBOX(C);
+		MODIFY_CHECKBOX(Z);
+		MODIFY_CHECKBOX(I);
+		MODIFY_CHECKBOX(D);
+		MODIFY_CHECKBOX(B);
+		MODIFY_CHECKBOX(R);
+		MODIFY_CHECKBOX(V);
+		MODIFY_CHECKBOX(N);
+
+	#undef MODIFY_CHECKBOX
+		return TRUE;
+	}
+	else if (nMessage == WM_CLOSE)
+	{
+		if (disasmblyText)
+		{
+			free(disasmblyText);
+			disasmblyText = NULL;
+		}
+
+		disasmblyTextLen = 0;
+
+		g_hWndCpuDebugger = NULL;
+		DestroyWindow(hDlg);
+		return TRUE;
+	}
+	else if (nMessage == WM_COMMAND)
+	{
+		WORD wCommandID = LOWORD(wParam);
+		if (wCommandID == IDC_BUTTON_SEEK_TO)
+		{
+			int lineCount = 0;
+			u32 addr;
+			char szText[128];
+			GetDlgItemTextA(hDlg, IDC_EDIT_PC, szText, 128);
+			sscanf(szText, "%X", &addr);
+			sprintf(szText, "%04X:", addr);
+
+			char *prev = disasmblyText;
+			char *ptr = strstr(disasmblyText, szText);
+			if (ptr)
+			{
+				while (prev < ptr && prev)
+				{
+					prev = strstr(prev, "\r\n");
+					if (prev)
+					{
+						++lineCount;
+						prev += 2;
+					}
+				}
+
+				SendDlgItemMessage(hDlg, IDC_EDIT_DISASSMEBLY, WM_KEYDOWN, VK_HOME, 0);
+				SendDlgItemMessage(hDlg, IDC_EDIT_DISASSMEBLY, EM_LINESCROLL, 0, lineCount - 1);
+			}
+		}
+		else if (wCommandID == IDC_BUTTON_RESET)
+		{
+			powerup();
+
+			cpu_reset();
+			ppu_init();
+		}
+	}
+
+	return FALSE;
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
@@ -132,7 +368,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 	switch (nMessage)
 	{
 	case WM_CREATE:
-		CreateMenus(hWnd);
+		//g_hWndNameTable = CreateNameTableWnd();
 		break;
 
 	case WM_DESTROY:
@@ -141,7 +377,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 
 	case WM_COMMAND:
 		wCommondID = LOWORD(wParam);
-		if (wCommondID == IDM_OPEN_NES_ROM)
+		if (wCommondID == ID_FILE_OPEN)
 		{
 			if (rom_loaded)
 			{
@@ -174,6 +410,25 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 
 				input_init(handle_key_event);
 			}
+		}
+		else if (wCommondID == ID_DEBUG_NAMETABLES)
+		{
+			if (g_hWndNameTable)
+			{
+				ShowWindow(g_hWndNameTable, SW_SHOWNORMAL);
+			}
+			else
+			{
+				g_hWndNameTable = CreateNameTableWnd();
+			}
+		}
+		else if (wCommondID == ID_DEBUG_CPUDEBUGGER)
+		{
+			if (!g_hWndCpuDebugger)
+			{
+				g_hWndCpuDebugger = CreateDialog(g_hInstance, MAKEINTRESOURCE(IDD_DIALOG_DEBUGGER), NULL, CPUDebuggerCallback);
+			}
+			ShowWindow(g_hWndCpuDebugger, SW_SHOWNORMAL);
 		}
 
 	default:
@@ -286,6 +541,8 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 	wndClass.lpfnWndProc = WndProc;
 	wndClass.style = CS_VREDRAW | CS_HREDRAW;
 	wndClass.lpszClassName = RX_NES_WND_CLASS;
+	wndClass.hbrBackground = GetStockObject(BLACK_BRUSH);
+	wndClass.lpszMenuName = MAKEINTRESOURCE(IDR_MENU_MAIN);
 
 	if (!RegisterClass(&wndClass))
 	{
@@ -334,7 +591,8 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 		{
 			if (!pause && rom_loaded)
 			{
-				cpu_execute_translate(CYCLE_PER_SCANLINE);
+				for (int i = 0; i < 3; ++i)
+					cpu_execute_translate(CYCLE_PER_SCANLINE);
 				ppu_render_scanline(CYCLE_PER_SCANLINE * 3);
 				//scan_line = (scan_line + 1) % 240;
 				extern u16 cur_scanline;

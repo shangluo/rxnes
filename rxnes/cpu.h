@@ -51,6 +51,7 @@ extern registers regs;
 #define IF regs.SR.I
 #define DF regs.SR.D
 #define BF regs.SR.B
+#define RF regs.SR.R
 #define VF regs.SR.V
 #define NF regs.SR.N
 
@@ -66,4 +67,6 @@ u8   pop();
 void cpu_mm_write( u16 addr, u8 *buf, u16 len );
 void cpu_mm_read( u16 addr, u8 *buf, u16 len );
 
+//debugging
+u8 cpu_disassemble_intruction(u16 addr, char *buf, int len);
 #endif //_CPU_H
