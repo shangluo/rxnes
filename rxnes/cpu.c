@@ -19,6 +19,10 @@ u8 memory[0x10000];
 extern u8 oam[0x100];
 
 //
+extern u8 mmc3_irq_enabled;
+extern u8 mmc3_irq_counter;
+
+//
 extern ines_rom *c_rom;
 
 //ppu address for writing and reading
@@ -40,9 +44,12 @@ u32 cpu_cycles;
 void mapper1_handler(u16 addr, u8 data);
 void mapper2_handler(u16 addr, u8 data);
 void mapper3_handler(u16 addr, u8 data);
+void mapper4_handler(u16 addr, u8 data);
+void mapper23_handler(u16 addr, u8 data);
 
 static void cpu_handle_io( u16 reg );
 static void cpu_handle_dma( void );
+static void cpu_handle_irq(void);
 static void cpu_handle_nmi( void );
 
 u8 opcode_cycles[] = {
@@ -1212,6 +1219,7 @@ static u8 PLA()
 }
 static u8 PLP()
 {
+	setflag(IF, 0);
     regs.FLAGS = pop();
     return 1;
 }
@@ -1325,6 +1333,8 @@ static u8 RTI()
     LOG_TRACE( "RTI", "RTI occur at 0x%x", regs.PC );
     //popup sr
     regs.FLAGS = pop();
+
+	setflag(IF, 0);
 
     //popup pc
     regs.PCL = pop();
@@ -1975,6 +1985,9 @@ u32  cpu_execute_translate( u32 n_cycles )
         //update PC
         regs.PC += bytes;
 
+		//check irq
+		// cpu_handle_irq();
+
         //check nmi
         cpu_handle_nmi();
 
@@ -2008,20 +2021,24 @@ void cpu_mm_write( u16 addr, u8 *buf, u16 len )
     int i;
     int n_addr;
 
-
     if ( addr >= 0x8000 &&  c_rom->mapper != 0x0 )
     {
         switch( c_rom->mapper )
         {
-        case 0x1:
+        case 1:
             mapper1_handler( addr, *buf );
 			break;
-		case 0x2:
+		case 2:
 			mapper2_handler(addr, *buf);
 			break;
-		case 0x3:
+		case 3:
 			mapper3_handler(addr, *buf);
 			break;
+		case 4:
+			mapper4_handler(addr, *buf);
+			break;
+		case 23:
+			mapper23_handler(addr, *buf);
 		default:
             break;
         }
@@ -2177,6 +2194,28 @@ void cpu_handle_nmi( void )
     }
 }
 
+void cpu_handle_irq(void)
+{
+	// if nmi enable
+	if (!regs.SR.I && mmc3_irq_enabled && !mmc3_irq_counter)
+	{
+		LOG_TRACE("IRQ", "IRQ occur at %x", regs.PC);
+		//push pc
+		push(regs.PCH);
+		push(regs.PCL);
+
+		//push sr
+		push(regs.FLAGS);
+
+		setflag(IF, 1);
+
+		cpu_mm_read(0xfffe, (u8 *)&regs.PC, sizeof(regs.PC));
+
+		cpu_cycles += 7;
+	}
+}
+
+
 void cpu_handle_dma( void )
 {
     u16 addr = 0;
@@ -2231,37 +2270,37 @@ static void cpu_disassemble_format_operand(CPU_ADDRESSING_MODE mode, u16 operand
 		sprintf(buf, "%s", "A");
 		break;
 	case Immediate:
-		sprintf(buf, "#$%X", operand);
+		sprintf(buf, "#$%02X", operand);
 		break;
 	case Relative:
-		sprintf(buf, "$%X", operand);
+		sprintf(buf, "$%02X", operand);
 		break;
 	case Zero_Page:
-		sprintf(buf, "$%X", operand);
+		sprintf(buf, "$%02X", operand);
 		break;
 	case Zero_Page_X:
-		sprintf(buf, "$%X, X", operand);
+		sprintf(buf, "$%02X, X", operand);
 		break;
 	case Zero_Page_Y:
-		sprintf(buf, "$%X, Y", operand);
+		sprintf(buf, "$%02X, Y", operand);
 		break;
 	case Absolute:
-		sprintf(buf, "$%X", operand);
+		sprintf(buf, "$%04X", operand);
 		break;
 	case Absolute_X:
-		sprintf(buf, "$%X, X", operand);
+		sprintf(buf, "$%04X, X", operand);
 		break;
 	case Absolute_Y:
-		sprintf(buf, "$%X, Y", operand);
+		sprintf(buf, "$%04X, Y", operand);
 		break;
 	case Indirect:
-		sprintf(buf, "($%X)", operand);
+		sprintf(buf, "($%04X)", operand);
 		break;
 	case Indirect_X:
-		sprintf(buf, "($%X, X)", operand);
+		sprintf(buf, "($%02X, X)", operand);
 		break;
 	case Indirect_Y:
-		sprintf(buf, "($%X, Y)", operand);
+		sprintf(buf, "($%04X, Y)", operand);
 		break;
 	default:
 		break;

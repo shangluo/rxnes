@@ -35,6 +35,10 @@ u8 attribute_table[30][32];
 //
 u8 oam_idx[64];
 
+// mmc3
+extern u8 mmc3_irq_counter;
+extern u8 mmc3_irq_reload_value;
+
 //set each attribute table
 #define set_block( topleft, value )             \
 {                                               \
@@ -433,7 +437,7 @@ u32 ppu_render_scanline( u32 n_cycles )
 
         if ( cnt >= 8 )
         {
-            memory[PPU_STATUS] |= 0x10;
+            memory[PPU_STATUS] |= 0x20;
         }
 
         //draw background
@@ -547,7 +551,7 @@ u32 ppu_render_scanline( u32 n_cycles )
             {
                 for ( j = 0; j < 8; ++j )
                 {
-                    if ( (*sprite)[idx][ 7 - j] != 0  && *(line + cam_x + spr_x + 7 - j) != palette[vram[0x3f00]])
+                    if ( (*sprite)[idx][ 7 - j] != 0 /* && *(line + cam_x + spr_x + 7 - j) != palette[vram[0x3f00]]*/)
                     {
                         sprite0_hit = 1;
                         hit_line = cur_scanline + (sprite_height - 1) - idx;
@@ -609,12 +613,51 @@ finish:
         memory[PPU_STATUS] &= ~0x80;
     }
 
+	if (mmc3_irq_counter > 0)
+	{
+		--mmc3_irq_counter;
+	}
+	else
+	{
+		mmc3_irq_counter = mmc3_irq_reload_value;
+	}
+
     cur_scanline = ( cur_scanline + 1 ) % 240;
 
     return 1;
 }
 
-void ppu_fill_nametable(u8 *bits, int index)
+void ppu_fill_pattern_table(u8 *bits, int index)
+{
+	int r, c;
+	int i, idx;
+	tile *bg;
+	u16 line[128];
+
+	u16 scan_line;
+
+	for (scan_line = 0; scan_line < 128; ++scan_line)
+	{
+		r = scan_line / 8;
+		idx = scan_line % 8;
+
+		for (c = 0; c < 16; ++c)
+		{
+			bg = &tiles[index][r * 16 + c];
+
+			for (i = 0; i < 8; ++i)
+			{
+				*(line + 8 * c + 7 - i) = palette[(vram + 0x3f00)[(*bg)[idx][i] ? (0 * 4 + (*bg)[idx][i]) : (*bg)[idx][i]]];;
+			}
+		}
+
+		//draw back
+		memcpy(bits, line, sizeof(line));
+		bits += sizeof(line);
+	}
+}
+
+void ppu_fill_name_table(u8 *bits, int index)
 {
 	int r, c;
 	int i, idx;

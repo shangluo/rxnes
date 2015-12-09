@@ -91,7 +91,9 @@
     <ClCompile Include="main.c" />
     <ClCompile Include="mapper1.c" />
     <ClCompile Include="mapper2.c" />
+    <ClCompile Include="mapper23.c" />
     <ClCompile Include="mapper3.c" />
+    <ClCompile Include="mapper4.c" />
     <ClCompile Include="papu.c" />
     <ClCompile Include="ppu.c" />
   </ItemGroup>

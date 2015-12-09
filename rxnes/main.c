@@ -1,3 +1,5 @@
+#define RXNES_RENDER_DX9
+
 #include "ines.h"
 #include "cpu.h"
 #include "ppu.h"
@@ -6,9 +8,11 @@
 #include <stdio.h>
 #include <time.h>
 #include <windows.h>
+#ifdef RXNES_RENDER_DX9
 #include <d3d9.h>
-#include <tchar.h>
+#endif
 #include <dinput.h>
+#include <tchar.h>
 #include "resource.h"
 
 #pragma comment(lib, "d3d9.lib")
@@ -23,9 +27,14 @@ static u16 screen2[480][512];
 
 static int rom_loaded;
 
+#ifdef RXNES_RENDER_DX9
 LPDIRECT3D9 g_pD3D;
 LPDIRECT3DDEVICE9 g_pD3DDevice;
+LPDIRECT3DSURFACE9 g_pOffscreenBuffer;
 LPDIRECT3DSURFACE9 g_pBackbuffer;
+#else
+LPVOID g_pScreenBuf;
+#endif
 LPDIRECTINPUT g_pDInput;
 LPDIRECTINPUTDEVICE g_pDInputDevice;
 
@@ -120,10 +129,10 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 {
 	static int i = 0;
 	static HDC hDC;
-	static HDC hBackgroundDC[4] = { NULL };
-	static HBITMAP hOldBitmap[4] = { NULL };
-	static HBITMAP hBitmap[4] = { NULL };
-	static VOID *pBits[4] = { NULL };
+	static HDC hBackgroundDC[6] = { NULL };
+	static HBITMAP hOldBitmap[6] = { NULL };
+	static HBITMAP hBitmap[6] = { NULL };
+	static VOID *pBits[6] = { NULL };
 	static BITMAPINFO bmi = {0};
 	PAINTSTRUCT ps;
 	switch (nMessage)
@@ -136,8 +145,14 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		bmi.bmiHeader.biPlanes = 1;
 		bmi.bmiHeader.biBitCount = 16;
 		bmi.bmiHeader.biCompression = BI_RGB; 
-		for (i = 0; i < 4; ++i)
+		for (i = 0; i < 6; ++i)
 		{
+			if (i > 3)
+			{
+				bmi.bmiHeader.biWidth = 128;
+				bmi.bmiHeader.biHeight = -128;
+			}
+
 			hBackgroundDC[i] = CreateCompatibleDC(hDC);
 			hBitmap[i] = CreateDIBSection(hDC, &bmi, DIB_RGB_COLORS, &pBits[i], NULL, 0);
 			hOldBitmap[i] = SelectObject(hBackgroundDC[i], hBitmap[i]);
@@ -153,19 +168,29 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		{
 			BitBlt(hDC, 256 * (i & 0x1), 240 * ( i >> 1), 256 , 240, hBackgroundDC[i], 0, 0, SRCCOPY);
 		}
+
+		for (i = 0; i < 2; ++i)
+		{
+			//BitBlt(hDC, 256 * i, 480, 256, 256, hBackgroundDC[i + 4], 0, 0, SRCCOPY);
+			StretchBlt(hDC, 256 * i, 480, 256, 256, hBackgroundDC[i + 4], 0, 0, 128, 128, SRCCOPY);
+		}
 		EndPaint(hWnd, &ps);
 		break;
 
 	case WM_TIMER:
 		for (i = 0; i < 4; ++i)
 		{
-			ppu_fill_nametable(pBits[i], i);
+			ppu_fill_name_table(pBits[i], i);
+		}
+		for (i = 0; i < 2; ++i)
+		{
+			ppu_fill_pattern_table(pBits[i + 4], i);
 		}
 		InvalidateRect(hWnd, NULL, FALSE);
 		break;
 
 	case WM_DESTROY:
-		for (i = 0; i < 4; ++i)
+		for (i = 0; i < 6; ++i)
 		{
 			SelectObject(hBackgroundDC[i], hOldBitmap[i]);
 			DeleteObject(hBitmap[i]);
@@ -202,10 +227,10 @@ HWND CreateNameTableWnd()
 	}
 
 	RECT rt;
-	SetRect(&rt, 0, 0, 512, 480);
+	SetRect(&rt, 0, 0, 512, 736);
 	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, FALSE);
 
-	HWND hWnd = CreateWindow(RX_NES_NAMETABLE_WND_CLASS, _T("Name Tables"), WS_OVERLAPPEDWINDOW & (~(WS_SIZEBOX | WS_MAXIMIZEBOX)), CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, g_hInstance, NULL);
+	HWND hWnd = CreateWindow(RX_NES_NAMETABLE_WND_CLASS, _T("Name Tables & Pattern Table"), WS_OVERLAPPEDWINDOW & (~(WS_SIZEBOX | WS_MAXIMIZEBOX)), CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, g_hInstance, NULL);
 	if (!hWnd)
 	{
 		return NULL;
@@ -218,16 +243,19 @@ HWND CreateNameTableWnd()
 
 INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LPARAM lParam)
 {
+
+#define WM_SCROLL_TO_ADDR WM_USER + 1
+
 	static HWND hWndInstructionList;
 	static char *disasmblyText;
 	int disasmblyTextLen = 256;
 	if (nMessage == WM_INITDIALOG)
 	{
-		u32 addr = 0xc000;
+		u32 addr = 0x8000;
 
 		if (rom_loaded)
 		{
-			memcpy(&addr, &memory[0xfffc], 2);
+			//memcpy(&addr, &memory[0xfffc], 2);
 		}
 
 		u8 bytes;
@@ -289,7 +317,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 		MODIFY_REG_VALUE(Y);
 		MODIFY_REG_VALUE(SP);
 		MODIFY_REG_VALUE(PC);
-#undef MODIFY_REG_VALUE
+	#undef MODIFY_REG_VALUE
 
 	#define MODIFY_CHECKBOX(reg_name) \
 		SendDlgItemMessage(hDlg, IDC_CHECK_REG_FLAG_##reg_name, BM_SETCHECK, regs.SR.##reg_name == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -304,7 +332,35 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 		MODIFY_CHECKBOX(N);
 
 	#undef MODIFY_CHECKBOX
+
+		PostMessage(hDlg, WM_SCROLL_TO_ADDR, regs.PC, 0);
 		return TRUE;
+	}
+	else if (nMessage == WM_SCROLL_TO_ADDR)
+	{
+		int lineCount = 0;
+		u32 addr = (u32)wParam;
+		char szText[128];
+
+		sprintf(szText, "%04X:", addr);
+
+		char *prev = disasmblyText;
+		char *ptr = strstr(disasmblyText, szText);
+		if (ptr)
+		{
+			while (prev < ptr && prev)
+			{
+				prev = strstr(prev, "\r\n");
+				if (prev)
+				{
+					++lineCount;
+					prev += 2;
+				}
+			}
+
+			SendDlgItemMessage(hDlg, IDC_EDIT_DISASSMEBLY, WM_KEYDOWN, VK_HOME, 0);
+			SendDlgItemMessage(hDlg, IDC_EDIT_DISASSMEBLY, EM_LINESCROLL, 0, lineCount - 1);
+		}
 	}
 	else if (nMessage == WM_CLOSE)
 	{
@@ -325,30 +381,13 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 		WORD wCommandID = LOWORD(wParam);
 		if (wCommandID == IDC_BUTTON_SEEK_TO)
 		{
-			int lineCount = 0;
+			
 			u32 addr;
 			char szText[128];
 			GetDlgItemTextA(hDlg, IDC_EDIT_PC, szText, 128);
 			sscanf(szText, "%X", &addr);
-			sprintf(szText, "%04X:", addr);
-
-			char *prev = disasmblyText;
-			char *ptr = strstr(disasmblyText, szText);
-			if (ptr)
-			{
-				while (prev < ptr && prev)
-				{
-					prev = strstr(prev, "\r\n");
-					if (prev)
-					{
-						++lineCount;
-						prev += 2;
-					}
-				}
-
-				SendDlgItemMessage(hDlg, IDC_EDIT_DISASSMEBLY, WM_KEYDOWN, VK_HOME, 0);
-				SendDlgItemMessage(hDlg, IDC_EDIT_DISASSMEBLY, EM_LINESCROLL, 0, lineCount - 1);
-			}
+			
+			PostMessage(hDlg, WM_SCROLL_TO_ADDR, addr, 0);
 		}
 		else if (wCommandID == IDC_BUTTON_RESET)
 		{
@@ -359,19 +398,60 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 		}
 	}
 
+	#undef WM_SCROLL_TO_ADDR
+
 	return FALSE;
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 {
+#ifndef RXNES_RENDER_DX9
+	static HDC hDC = NULL;
+	static HDC hBackgroundDC;
+	static HBITMAP hOldBitmap;
+	static HBITMAP hBitmap;
+	static BITMAPINFO bmi;
+	PAINTSTRUCT ps;
+	RECT rt;
+#endif // !RX
+
 	WORD wCommondID = 0;
 	switch (nMessage)
 	{
 	case WM_CREATE:
-		//g_hWndNameTable = CreateNameTableWnd();
+#ifndef RXNES_RENDER_DX9
+		ZeroMemory(&bmi, sizeof(bmi));
+		hDC = GetDC(hWnd);
+		bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+		bmi.bmiHeader.biWidth = 256;
+		bmi.bmiHeader.biHeight = -240;
+		bmi.bmiHeader.biPlanes = 1;
+		bmi.bmiHeader.biBitCount = 16;
+		bmi.bmiHeader.biCompression = BI_RGB;
+		hBackgroundDC = CreateCompatibleDC(hDC);
+		hBitmap = CreateDIBSection(hDC, &bmi, DIB_RGB_COLORS, &g_pScreenBuf, NULL, 0);
+		hOldBitmap = SelectObject(hBackgroundDC, hBitmap);
+
+		ReleaseDC(hWnd, hDC);
+#endif
 		break;
 
+#ifndef RXNES_RENDER_DX9
+	case WM_PAINT:
+		hDC = BeginPaint(hWnd, &ps);
+		GetClientRect(hWnd, &rt);
+		StretchBlt(hDC, 0, 0, rt.right, rt.bottom, hBackgroundDC, 0, 0, 256, 240, SRCCOPY);
+		EndPaint(hWnd, &ps);
+		break;
+#endif
+
 	case WM_DESTROY:
+#ifndef RXNES_RENDER_DX9
+		SelectObject(hDC, hOldBitmap);
+		DeleteObject(hBitmap);
+		DeleteDC(hBackgroundDC);
+#endif
+		running = 0;
 		PostQuitMessage(0);
 		break;
 
@@ -440,6 +520,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 
 BOOL InitDX(HWND hWnd)
 {
+#ifdef RXNES_RENDER_DX9
 	g_pD3D = Direct3DCreate9(D3D_SDK_VERSION);
 	if (!g_pD3D)
 	{
@@ -463,11 +544,18 @@ BOOL InitDX(HWND hWnd)
 		return FALSE;
 	}
 
+	IDirect3DDevice9_CreateOffscreenPlainSurface(g_pD3DDevice, 512, 480, d3dpp.BackBufferFormat, D3DPOOL_SYSTEMMEM, &g_pOffscreenBuffer, NULL);
+	if (!g_pOffscreenBuffer)
+	{
+		return FALSE;
+	}
+
 	IDirect3DDevice9_GetBackBuffer(g_pD3DDevice, 0, 0, D3DBACKBUFFER_TYPE_MONO, &g_pBackbuffer);
 	if (!g_pBackbuffer)
 	{
 		return FALSE;
 	}
+#endif
 
 	DirectInput8Create(g_hInstance, DIRECTINPUT_VERSION, &IID_IDirectInput8, &g_pDInput, NULL);
 	if (!g_pDInput)
@@ -505,6 +593,19 @@ BOOL InitDX(HWND hWnd)
 
 void DestroyDX()
 {
+#ifdef RXNES_RENDER_DX9
+	if (g_pBackbuffer)
+	{
+		IDirect3DSurface9_Release(g_pBackbuffer);
+		g_pBackbuffer = NULL;
+	}
+
+	if (g_pOffscreenBuffer)
+	{
+		IDirect3DSurface9_Release(g_pOffscreenBuffer);
+		g_pOffscreenBuffer = NULL;
+	}
+
 	if (g_pD3D)
 	{
 		IDirect3D9_Release(g_pD3D);
@@ -516,6 +617,7 @@ void DestroyDX()
 		IDirect3DDevice9_Release(g_pD3DDevice);
 		g_pD3DDevice = NULL;
 	}
+#endif
 
 	if (g_pDInput)
 	{
@@ -589,7 +691,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 		}
 		else
 		{
-			if (!pause && rom_loaded)
+			if (!pause && rom_loaded && running)
 			{
 				for (int i = 0; i < 3; ++i)
 					cpu_execute_translate(CYCLE_PER_SCANLINE);
@@ -599,19 +701,29 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 				scan_line = cur_scanline;
 				if (scan_line == 0)
 				{
+#ifdef RXNES_RENDER_DX9
 					scale2(screen, screen2);
 
+
 					// copy
-					//IDirect3DDevice9_Clear(g_pD3DDevice, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+					IDirect3DDevice9_Clear(g_pD3DDevice, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
 					D3DLOCKED_RECT lockedRect;
-					HRESULT hr = IDirect3DSurface9_LockRect(g_pBackbuffer, &lockedRect, NULL, D3DLOCK_DISCARD);
+					HRESULT hr = IDirect3DSurface9_LockRect(g_pOffscreenBuffer, &lockedRect, NULL, D3DLOCK_DISCARD);
 
 					if (SUCCEEDED(hr))
 					{
 						CopyMemory(lockedRect.pBits, screen2, 480 * 512 * sizeof(u16));
-						IDirect3DSurface9_UnlockRect(g_pBackbuffer);
+						IDirect3DSurface9_UnlockRect(g_pOffscreenBuffer);
 					}
+					IDirect3DDevice9_UpdateSurface(g_pD3DDevice, g_pOffscreenBuffer, NULL, g_pBackbuffer, NULL);
 					IDirect3DDevice9_Present(g_pD3DDevice, NULL, NULL, NULL, NULL);
+#else
+					if (g_pScreenBuf)
+					{
+						memcpy(g_pScreenBuf, screen, 256 * 240 * sizeof(u16));
+						InvalidateRect(hWnd, NULL, FALSE);
+					}
+#endif
 				}
 			}
 		}
