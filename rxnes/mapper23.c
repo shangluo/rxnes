@@ -2,6 +2,7 @@
 #include "ppu.h"
 #include "cpu.h"
 #include "ines.h"
+#include "mapper.h"
 #include <string.h>
 
 extern ines_rom *c_rom;
@@ -22,7 +23,7 @@ void mapper23_handle_chr_switch(u16 addr, u8 data, u16 addr_start, u16 addr_end,
 	}
 }
 
-void mapper23_handler(u16 addr, u8 data)
+static void write(u16 addr, u8 data)
 {
 	static u8 prg_swap_mode = 0;
 	// back select
@@ -70,3 +71,5 @@ void mapper23_handler(u16 addr, u8 data)
 
 	return;
 }
+
+mapper_implement(23, write, NULL);

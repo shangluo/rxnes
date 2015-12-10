@@ -3,8 +3,10 @@
 
 #include "ppu.h"
 #include "cpu.h"
+#include "mapper.h"
 #include "ines.h"
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
 ines_rom *c_rom;
@@ -42,6 +44,8 @@ void ines_loadrom( char *filename )
     c_rom->chr_cnt = header.chr_rom;
     c_rom->mapper = ( ( header.misc & 0xf0 ) >> 4 ) | \
                     ( ( header.misc & 0xf000 ) >> 8 );
+
+	mapper_make_current(c_rom->mapper);
 
     c_rom->prg_banks = ( u8 * )malloc ( 16 * 1024 * header.prg_rom );
     fread( c_rom->prg_banks, 16 * 1024 * header.prg_rom, 1, fp );

@@ -1,4 +1,5 @@
 #include "types.h"
+#include "mapper.h"
 #include "ppu.h"
 #include "cpu.h"
 #include "ines.h"
@@ -6,7 +7,7 @@
 
 extern ines_rom *c_rom;
 
-void mapper2_handler(u16 addr, u8 data)
+static void write(u16 addr, u8 data)
 {
 	u8 bank_number = data;
 
@@ -17,3 +18,5 @@ void mapper2_handler(u16 addr, u8 data)
 
 	return;
 }
+
+mapper_implement(2, write, NULL);

@@ -2,11 +2,12 @@
 #include "ppu.h"
 #include "cpu.h"
 #include "ines.h"
+#include "mapper.h"
 #include <string.h>
 
 extern ines_rom *c_rom;
 
-void mapper3_handler(u16 addr, u8 data)
+static void write(u16 addr, u8 data)
 {
 	u8 bank_number = data & 0x3 ;
 
@@ -18,3 +19,5 @@ void mapper3_handler(u16 addr, u8 data)
 
 	return;
 }
+
+mapper_implement(3, write, NULL);

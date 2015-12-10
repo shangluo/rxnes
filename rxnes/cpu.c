@@ -7,6 +7,7 @@
 #include "log.h"
 #include "input.h"
 #include "ines.h"
+#include "mapper.h"
 #include <string.h>
 
 //registers
@@ -39,13 +40,6 @@ extern u8 mirror;
 //ppu position
 extern u8 cam_x, cam_y;
 u32 cpu_cycles;
-
-//mapper function
-void mapper1_handler(u16 addr, u8 data);
-void mapper2_handler(u16 addr, u8 data);
-void mapper3_handler(u16 addr, u8 data);
-void mapper4_handler(u16 addr, u8 data);
-void mapper23_handler(u16 addr, u8 data);
 
 static void cpu_handle_io( u16 reg );
 static void cpu_handle_dma( void );
@@ -2023,29 +2017,11 @@ void cpu_mm_write( u16 addr, u8 *buf, u16 len )
 
     if ( addr >= 0x8000 &&  c_rom->mapper != 0x0 )
     {
-        switch( c_rom->mapper )
-        {
-        case 1:
-            mapper1_handler( addr, *buf );
-			break;
-		case 2:
-			mapper2_handler(addr, *buf);
-			break;
-		case 3:
-			mapper3_handler(addr, *buf);
-			break;
-		case 4:
-			mapper4_handler(addr, *buf);
-			break;
-		case 23:
-			mapper23_handler(addr, *buf);
-		default:
-            break;
-        }
-
+		mapper_write(addr, *buf);
         //not really write on rom
         return;
     }
+
     //memory from $0000~$07ff mirrored 3 times from $0800~$1fff
     if ( addr < 0x2000 )
     {
@@ -2309,7 +2285,7 @@ static void cpu_disassemble_format_operand(CPU_ADDRESSING_MODE mode, u16 operand
 
 static u8 cpu_disassemble_intruction_internal(u16 addr, char *instruction, CPU_ADDRESSING_MODE mode, char *buf, int len)
 {
-	u16 bytes = 1;
+	u8 bytes = 1;
 	u16 operand = 0;
 	char operand_buf[20];
 	memset(operand_buf, 0, sizeof(operand_buf));
@@ -2351,7 +2327,6 @@ static u8 cpu_disassemble_intruction_internal(u16 addr, char *instruction, CPU_A
 u8 cpu_disassemble_intruction(u16 addr, char *buf, int len)
 {
 	u8 opcode;
-	u8 data;
 	u8 bytes = 0;
 
 	memset(buf, 0, len);

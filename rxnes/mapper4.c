@@ -2,6 +2,7 @@
 #include "ppu.h"
 #include "cpu.h"
 #include "ines.h"
+#include "mapper.h"
 #include <string.h>
 
 extern ines_rom *c_rom;
@@ -10,7 +11,7 @@ u8 mmc3_irq_reload_value = 0;
 u8 mmc3_irq_counter = 0;
 u8 mmc3_irq_enabled = 0;
 
-void mapper4_handler(u16 addr, u8 data)
+static void write(u16 addr, u8 data)
 {
 	static u8 bank_selector = 0;
 	static u8 chr_a12_inversion = 0;
@@ -29,7 +30,6 @@ void mapper4_handler(u16 addr, u8 data)
 		if (bank_selector >= 6)
 		{
 			bank_no = data & 0x3f;
-			bank_no >= 1;
 		}
 		else if (bank_selector <= 1)
 		{
@@ -99,3 +99,5 @@ void mapper4_handler(u16 addr, u8 data)
 
 	return;
 }
+
+mapper_implement(4, write, NULL);

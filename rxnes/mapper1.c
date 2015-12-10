@@ -1,4 +1,5 @@
 #include "types.h"
+#include "mapper.h"
 #include "ppu.h"
 #include "cpu.h"
 #include "ines.h"
@@ -12,10 +13,9 @@ static u8 chr_bank1;
 static u8 prg_bank;
 
 extern u8 mirror;
-
 extern ines_rom *c_rom;
 
-void mapper1_handler( u16 addr, u8 data )
+static void write( u16 addr, u8 data )
 {
     if ( data & 0x80 )
     {
@@ -114,3 +114,5 @@ void mapper1_handler( u16 addr, u8 data )
 
     return;
 }
+
+mapper_implement(1, write, NULL);

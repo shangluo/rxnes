@@ -1,6 +1,7 @@
 #define RXNES_RENDER_DX9
 
 #include "ines.h"
+#include "mapper.h"
 #include "cpu.h"
 #include "ppu.h"
 #include "log.h"
@@ -248,7 +249,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 
 	static HWND hWndInstructionList;
 	static char *disasmblyText;
-	int disasmblyTextLen = 256;
+	unsigned int disasmblyTextLen = 256;
 	if (nMessage == WM_INITDIALOG)
 	{
 		u32 addr = 0x8000;
@@ -267,7 +268,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 
 		while (addr <= 0xffff)
 		{
-			bytes = cpu_disassemble_intruction(addr, buf, 128);
+			bytes = cpu_disassemble_intruction((u16)addr, buf, 128);
 			memset(opcode, 0, 128);
 			for (i = 0; i < bytes; ++i)
 			{
@@ -300,7 +301,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 
 		}
 		
-		SendDlgItemMessageA(hDlg, IDC_EDIT_DISASSMEBLY, WM_SETTEXT, 0, disasmblyText);
+		SendDlgItemMessageA(hDlg, IDC_EDIT_DISASSMEBLY, WM_SETTEXT, 0, (LPARAM)disasmblyText);
 		SetTimer(hDlg, 1, 30, NULL);
 		return TRUE;
 	}
@@ -668,12 +669,11 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 
 	int scan_line = 0;
-
 	rom_loaded = 0;
-
 	running = 1;
 
 	LOG_INIT();
+	mapper_init();
 
 	while (running)
 	{
