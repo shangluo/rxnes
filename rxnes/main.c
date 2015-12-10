@@ -134,31 +134,40 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 	static HBITMAP hOldBitmap[6] = { NULL };
 	static HBITMAP hBitmap[6] = { NULL };
 	static VOID *pBits[6] = { NULL };
-	static BITMAPINFO bmi = {0};
+	static LPBITMAPINFOHEADER pBMIHeader = NULL;
+	static LPDWORD pColorMask = NULL;
 	PAINTSTRUCT ps;
 	switch (nMessage)
 	{
 	case WM_CREATE:
 		hDC = GetDC(hWnd);
-		bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
-		bmi.bmiHeader.biWidth = 256;
-		bmi.bmiHeader.biHeight = -240;
-		bmi.bmiHeader.biPlanes = 1;
-		bmi.bmiHeader.biBitCount = 16;
-		bmi.bmiHeader.biCompression = BI_RGB; 
+		pBMIHeader = (LPBITMAPINFOHEADER)malloc(sizeof(*pBMIHeader) + 3 * sizeof(DWORD));
+		ZeroMemory(pBMIHeader, sizeof(*pBMIHeader));
+		pBMIHeader->biSize = sizeof(*pBMIHeader);
+		pBMIHeader->biWidth = 256;
+		pBMIHeader->biHeight = -240;
+		pBMIHeader->biPlanes = 1;
+		pBMIHeader->biBitCount = 16;
+		pBMIHeader->biCompression = BI_BITFIELDS;
+		pColorMask = (LPDWORD)(pBMIHeader + 1);
+		*pColorMask++ = 0x0000f800;
+		*pColorMask++ = 0x000007e0;
+		*pColorMask++ = 0x0000001f;
 		for (i = 0; i < 6; ++i)
 		{
 			if (i > 3)
 			{
-				bmi.bmiHeader.biWidth = 128;
-				bmi.bmiHeader.biHeight = -128;
+				pBMIHeader->biWidth = 128;
+				pBMIHeader->biHeight = -128;
 			}
 
 			hBackgroundDC[i] = CreateCompatibleDC(hDC);
-			hBitmap[i] = CreateDIBSection(hDC, &bmi, DIB_RGB_COLORS, &pBits[i], NULL, 0);
+			hBitmap[i] = CreateDIBSection(hDC, (const BITMAPINFO *)pBMIHeader, DIB_RGB_COLORS, &pBits[i], NULL, 0);
 			hOldBitmap[i] = SelectObject(hBackgroundDC[i], hBitmap[i]);
 		}
 
+		free(pBMIHeader);
+		pBMIHeader = NULL;
 		ReleaseDC(hWnd, hDC);
 
 		SetTimer(hWnd, 1, 30, NULL);
@@ -411,7 +420,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 	static HDC hBackgroundDC;
 	static HBITMAP hOldBitmap;
 	static HBITMAP hBitmap;
-	static BITMAPINFO bmi;
+	static LPBITMAPINFOHEADER pBMIHeader = NULL;
+	static LPDWORD pColorMask = NULL;
 	PAINTSTRUCT ps;
 	RECT rt;
 #endif // !RX
@@ -421,17 +431,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 	{
 	case WM_CREATE:
 #ifndef RXNES_RENDER_DX9
-		ZeroMemory(&bmi, sizeof(bmi));
-		hDC = GetDC(hWnd);
-		bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
-		bmi.bmiHeader.biWidth = 256;
-		bmi.bmiHeader.biHeight = -240;
-		bmi.bmiHeader.biPlanes = 1;
-		bmi.bmiHeader.biBitCount = 16;
-		bmi.bmiHeader.biCompression = BI_RGB;
+		pBMIHeader = (LPBITMAPINFOHEADER)malloc(sizeof(*pBMIHeader) + 3 * sizeof(DWORD));
+		ZeroMemory(pBMIHeader, sizeof(*pBMIHeader));
+		pBMIHeader->biSize = sizeof(*pBMIHeader);
+		pBMIHeader->biWidth = 256;
+		pBMIHeader->biHeight = -240;
+		pBMIHeader->biPlanes = 1;
+		pBMIHeader->biBitCount = 16;
+		pBMIHeader->biCompression = BI_BITFIELDS;
+		pColorMask = (LPDWORD)(pBMIHeader + 1);
+		*pColorMask++ = 0x0000f800;
+		*pColorMask++ = 0x000007e0;
+		*pColorMask++ = 0x0000001f;
 		hBackgroundDC = CreateCompatibleDC(hDC);
-		hBitmap = CreateDIBSection(hDC, &bmi, DIB_RGB_COLORS, &g_pScreenBuf, NULL, 0);
+		hBitmap = CreateDIBSection(hDC, (const BITMAPINFO *)pBMIHeader, DIB_RGB_COLORS, &g_pScreenBuf, NULL, 0);
 		hOldBitmap = SelectObject(hBackgroundDC, hBitmap);
+
+		free(pBMIHeader);
+		pBMIHeader = NULL;
 
 		ReleaseDC(hWnd, hDC);
 #endif
@@ -545,7 +562,7 @@ BOOL InitDX(HWND hWnd)
 		return FALSE;
 	}
 
-	IDirect3DDevice9_CreateOffscreenPlainSurface(g_pD3DDevice, 512, 480, d3dpp.BackBufferFormat, D3DPOOL_SYSTEMMEM, &g_pOffscreenBuffer, NULL);
+	IDirect3DDevice9_CreateOffscreenPlainSurface(g_pD3DDevice, 256, 240, d3dpp.BackBufferFormat, D3DPOOL_DEFAULT, &g_pOffscreenBuffer, NULL);
 	if (!g_pOffscreenBuffer)
 	{
 		return FALSE;
@@ -702,7 +719,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 				if (scan_line == 0)
 				{
 #ifdef RXNES_RENDER_DX9
-					scale2(screen, screen2);
+					//scale2(screen, screen2);
 
 
 					// copy
@@ -712,10 +729,11 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 					if (SUCCEEDED(hr))
 					{
-						CopyMemory(lockedRect.pBits, screen2, 480 * 512 * sizeof(u16));
+						CopyMemory(lockedRect.pBits, screen, 256 * 240 * sizeof(u16));
 						IDirect3DSurface9_UnlockRect(g_pOffscreenBuffer);
 					}
-					IDirect3DDevice9_UpdateSurface(g_pD3DDevice, g_pOffscreenBuffer, NULL, g_pBackbuffer, NULL);
+					//hr = IDirect3DDevice9_UpdateSurface(g_pD3DDevice, g_pOffscreenBuffer, NULL, g_pBackbuffer, NULL);
+					hr = IDirect3DDevice9_StretchRect(g_pD3DDevice, g_pOffscreenBuffer, NULL, g_pBackbuffer, NULL, D3DTEXF_POINT);
 					IDirect3DDevice9_Present(g_pD3DDevice, NULL, NULL, NULL, NULL);
 #else
 					if (g_pScreenBuf)

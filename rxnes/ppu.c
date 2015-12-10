@@ -372,7 +372,7 @@ u32 ppu_render_scanline( u32 n_cycles )
     //background disable
     if ( !( memory[PPU_CTRL_REG2] & 0x08 ) )
     {
-        memset( &screen[cur_scanline], 0, 256 * 2 );
+        memset( line, 0, 256 * 2 );
         goto finish;
     }
 
