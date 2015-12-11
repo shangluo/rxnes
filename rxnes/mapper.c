@@ -12,7 +12,7 @@ static mapper_handler *mapper_get_handler(int index);
 #define mapper_init_n(i)																								\
 		do																												\
  		{																												\
-			extern mapper_handler mapper_handler##i;																\
+			extern mapper_handler mapper_handler##i;																	\
 			mapper_handler_vector[i] = &mapper_handler##i;																\
 		} while (0);
 
@@ -33,7 +33,7 @@ void mapper_uninit()
 void mapper_reset()
 {
 	mapper_handler *handler = mapper_get_handler(mapper_current);
-	if (handler)
+	if (handler && handler->reset)
 	{
 		handler->reset();
 	}
@@ -47,7 +47,7 @@ void mapper_make_current(int mapper)
 void mapper_write(u16 addr, u8 data)
 {
 	mapper_handler *handler = mapper_get_handler(mapper_current);
-	if (handler)
+	if (handler && handler->write)
 	{
 		handler->write(addr, data);
 	}

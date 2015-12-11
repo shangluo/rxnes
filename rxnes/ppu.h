@@ -18,6 +18,7 @@ void ppu_mm_write( u16 addr, u8 data );
 u8 ppu_mm_get( u16 addr );
 void ppu_fill_name_table(u8 *bits, int index);
 void ppu_fill_pattern_table(u8 *bits, int index);
+void ppu_fill_pallete_table(u8 *bits);
 
 //ppu registers
 #define PPU_CTRL_REG1   0x2000

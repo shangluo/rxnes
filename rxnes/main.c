@@ -130,12 +130,16 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 {
 	static int i = 0;
 	static HDC hDC;
-	static HDC hBackgroundDC[6] = { NULL };
-	static HBITMAP hOldBitmap[6] = { NULL };
-	static HBITMAP hBitmap[6] = { NULL };
-	static VOID *pBits[6] = { NULL };
+	static HDC hBackgroundDC[7] = { NULL };
+	static HBITMAP hOldBitmap[7] = { NULL };
+	static HBITMAP hBitmap[7] = { NULL };
+	static VOID *pBits[7] = { NULL };
 	static LPBITMAPINFOHEADER pBMIHeader = NULL;
 	static LPDWORD pColorMask = NULL;
+	static POINT ptCursor;
+	static TCHAR szInfomation[256];
+	static RECT rtInfomation;
+	static HBRUSH hBlackBrush;
 	PAINTSTRUCT ps;
 	switch (nMessage)
 	{
@@ -153,12 +157,17 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		*pColorMask++ = 0x0000f800;
 		*pColorMask++ = 0x000007e0;
 		*pColorMask++ = 0x0000001f;
-		for (i = 0; i < 6; ++i)
+		for (i = 0; i < 7; ++i)
 		{
-			if (i > 3)
+			if (i > 3 && i <= 5)
 			{
 				pBMIHeader->biWidth = 128;
 				pBMIHeader->biHeight = -128;
+			}
+			else if (i > 5)
+			{
+				pBMIHeader->biWidth = 16;
+				pBMIHeader->biHeight = -2;
 			}
 
 			hBackgroundDC[i] = CreateCompatibleDC(hDC);
@@ -170,20 +179,35 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		pBMIHeader = NULL;
 		ReleaseDC(hWnd, hDC);
 
+		hBlackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+		SetRect(&rtInfomation, 512, 320, 1024, 480);
+
 		SetTimer(hWnd, 1, 30, NULL);
 
 	case WM_PAINT:
 		hDC = BeginPaint(hWnd, &ps);
+
+		// name table
 		for (i = 0; i < 4; ++i)
 		{
 			BitBlt(hDC, 256 * (i & 0x1), 240 * ( i >> 1), 256 , 240, hBackgroundDC[i], 0, 0, SRCCOPY);
 		}
-
-		for (i = 0; i < 2; ++i)
+		
+		// pattern table
+		for (i = 4; i < 6; ++i)
 		{
-			//BitBlt(hDC, 256 * i, 480, 256, 256, hBackgroundDC[i + 4], 0, 0, SRCCOPY);
-			StretchBlt(hDC, 256 * i, 480, 256, 256, hBackgroundDC[i + 4], 0, 0, 128, 128, SRCCOPY);
+			StretchBlt(hDC, 256 * (i  - 2), 0, 256, 256, hBackgroundDC[i], 0, 0, 128, 128, SRCCOPY);
 		}
+
+		// pallete
+		StretchBlt(hDC, 256 * 2, 256, 512, 64, hBackgroundDC[6], 0, 0, 16, 2, SRCCOPY);
+
+		// Infomation
+		FillRect(hDC, &rtInfomation, hBlackBrush);
+		SetBkMode(hDC, TRANSPARENT);
+		SetTextColor(hDC, RGB(0xff, 0xff, 0xff));
+		DrawText(hDC, szInfomation, -1, &rtInfomation, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
 		EndPaint(hWnd, &ps);
 		break;
 
@@ -196,16 +220,47 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		{
 			ppu_fill_pattern_table(pBits[i + 4], i);
 		}
+
+		ppu_fill_pallete_table(pBits[6]);
+
+		// 
+		GetCursorPos(&ptCursor);
+		ScreenToClient(hWnd, &ptCursor);
+
+		// name table
+		if (ptCursor.x >= 0 && ptCursor.x <= 512 && ptCursor.y >= 0 && ptCursor.y <= 480)
+		{
+			int index = (ptCursor.y / 256 << 1) | (ptCursor.x / 256);
+			_stprintf(szInfomation, _T("Name Table #%d"), index);
+		}
+		// pattern table
+		else if (ptCursor.x >= 512 && ptCursor.x <= 1024 && ptCursor.y >= 0 && ptCursor.y <= 256)
+		{
+			int indexPattern = (ptCursor.x - 512 ) / 256 ;
+			_stprintf(szInfomation, _T("Pattern Table #%d"), indexPattern);
+		}
+		// pallete table
+		else if (ptCursor.x >= 512 && ptCursor.x <= 1024 && ptCursor.y >= 256 && ptCursor.y <= 320)
+		{
+			int index = (ptCursor.y - 256) / 32 * 16 + (ptCursor.x - 512) / 32;
+			_stprintf(szInfomation, _T("Pallete Table With Index #%02x"), vram[0x3f00 + index]);
+		}
+		else
+		{
+			_tcscpy(szInfomation, _T(""));
+		}
+
 		InvalidateRect(hWnd, NULL, FALSE);
 		break;
 
 	case WM_DESTROY:
-		for (i = 0; i < 6; ++i)
+		for (i = 0; i < 7; ++i)
 		{
 			SelectObject(hBackgroundDC[i], hOldBitmap[i]);
 			DeleteObject(hBitmap[i]);
 			DeleteDC(hBackgroundDC[i]);
 		}
+		DeleteObject(hBlackBrush);
 		g_hWndNameTable = NULL;
 
 		break;
@@ -237,7 +292,7 @@ HWND CreateNameTableWnd()
 	}
 
 	RECT rt;
-	SetRect(&rt, 0, 0, 512, 736);
+	SetRect(&rt, 0, 0, 256 * 4, 480);
 	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, FALSE);
 
 	HWND hWnd = CreateWindow(RX_NES_NAMETABLE_WND_CLASS, _T("Name Tables & Pattern Table"), WS_OVERLAPPEDWINDOW & (~(WS_SIZEBOX | WS_MAXIMIZEBOX)), CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, g_hInstance, NULL);
@@ -673,7 +728,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 	SetRect(&rt, 0, 0, 512, 480);
 	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, TRUE);
 
-	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("RxNes"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, hInstance, NULL);
+	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("rxNES"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, hInstance, NULL);
 	if (!hWnd)
 	{
 		return EXIT_FAILURE;
@@ -742,6 +797,24 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 						InvalidateRect(hWnd, NULL, FALSE);
 					}
 #endif
+					static int frameCount;
+					static LARGE_INTEGER last;
+					static LARGE_INTEGER frequency;
+					static TCHAR szWindowTitle[128];
+					QueryPerformanceFrequency(&frequency);
+
+					LARGE_INTEGER current;
+					QueryPerformanceCounter(&current);
+
+					if (current.QuadPart - last.QuadPart > frequency.QuadPart)
+					{
+						_stprintf(szWindowTitle, _T("RxNes FPS : %d"), frameCount);
+						SetWindowText(hWnd, szWindowTitle);
+						
+						frameCount = 0;
+						last = current;
+					}
+					++frameCount;
 				}
 			}
 		}

@@ -235,6 +235,12 @@ void ppu_mm_write( u16 addr, u8 data )
 
     vram[ addr ] = memory[PPU_DATA];
 
+	// pallete index should be 0 ~ 0x3f
+	if (addr >= 0x3f00 && addr <= 0x3f1f)
+	{
+		vram[addr] &= 0x3f;
+	}
+
     //pallete
     if ( addr >= 0x3f00 && addr < 0x3f10 )
     {
@@ -743,5 +749,15 @@ void ppu_fill_name_table(u8 *bits, int index)
 		//draw back
 		memcpy(bits, line, sizeof(line));
 		bits += sizeof(line);
+	}
+}
+
+void ppu_fill_pallete_table(u8 *bits)
+{
+	int i;
+	for (i = 0; i < 32; ++i)
+	{ 
+		memcpy(bits, &palette[*(vram + 0x3f00 + i)], sizeof(u16));
+		bits += sizeof(u16);
 	}
 }
