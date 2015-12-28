@@ -1,7 +1,5 @@
 #include "types.h"
 #include "mapper.h"
-#include "ppu.h"
-#include "cpu.h"
 #include "ines.h"
 #include <string.h>
 
@@ -12,7 +10,6 @@ static u8 chr_bank0;
 static u8 chr_bank1;
 static u8 prg_bank;
 
-extern u8 mirror;
 extern ines_rom *c_rom;
 
 static void write( u16 addr, u8 data )
@@ -22,7 +19,7 @@ static void write( u16 addr, u8 data )
         reset = 0;
         load_register = 0;
         cotrol_register |= 0x0c;
-        memcpy( memory + 0xc000, c_rom->prg_banks + ( c_rom->prg_cnt - 1 ) * 1024 * 16, 1024 * 16 );
+		mapper_switch_prg(0xc000, 16, c_rom->prg_cnt - 1);
         return;
     }
 
@@ -40,15 +37,7 @@ static void write( u16 addr, u8 data )
         if ( addr >= 0x8000 && addr <= 0x9fff )
         {
             cotrol_register = load_register;
-            if ( ( cotrol_register & 0x3 ) == 0x2 )
-            {
-                mirror = 1;
-            }
-            else
-            {
-                mirror = 0;
-            }
-
+			mapper_set_mirror_mode((cotrol_register & 0x3) == 0x2);
         }
         //chr_bank0
         else if ( addr >= 0xa000 && addr <= 0xbfff )
@@ -58,15 +47,12 @@ static void write( u16 addr, u8 data )
 			{
 				if ( !( cotrol_register & 0x10 ) )
 				{
-					memcpy( vram , c_rom->chr_banks + ( chr_bank0 & 0x1e ) * 1024 * 8, 1024 * 8 );
+					mapper_switch_chr(0, 8, (chr_bank0 & 0x1e));
 				} else
 				{
-					memcpy( vram , c_rom->chr_banks + chr_bank0 * 1024 * 4, 1024 * 4 );
+					mapper_switch_chr(0, 4, (chr_bank0 & 0x1e));
 				}
 			}
-
-            //rebuild tiles
-            ppu_build_tiles();
         }
         //chr_bank1
         else if ( addr >= 0xc000 && addr <= 0xdfff )
@@ -80,10 +66,7 @@ static void write( u16 addr, u8 data )
             }
 
             //switch
-            memcpy( vram + 0x1000, c_rom->chr_banks + chr_bank1 * 1024 * 4, 1024 * 4 );
-
-            //rebuild tiles
-            ppu_build_tiles();
+			mapper_switch_chr(0x1000, 4, chr_bank1);
         }
         //prg_bank
         else if ( addr >= 0xe000 && addr <= 0xffff )
@@ -95,15 +78,15 @@ static void write( u16 addr, u8 data )
             case 0x0:
             case 0x4:
                 //switch 32, igore low bit
-                memcpy( memory + 0x8000, c_rom->prg_banks + ( prg_bank & 0x0e ) * 1024 * 32, 1024 * 32 );
+				mapper_switch_prg(0x8000, 32, prg_bank & 0x0e);
                 break;
 
             case 0x8:
-                memcpy( memory + 0xc000, c_rom->prg_banks + prg_bank * 1024 * 16, 1024 * 16 );
+				mapper_switch_prg(0xc000, 16, prg_bank);
                 break;
 
             case 0xc:
-                memcpy( memory + 0x8000, c_rom->prg_banks + prg_bank * 1024 * 16, 1024 * 16 );
+				mapper_switch_prg(0x8000, 16, prg_bank);
                 break;
             }
 

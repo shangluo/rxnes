@@ -96,19 +96,24 @@
     <ClCompile Include="mapper2.c" />
     <ClCompile Include="mapper23.c" />
     <ClCompile Include="mapper3.c" />
+    <ClCompile Include="mapper33.c" />
     <ClCompile Include="mapper4.c" />
     <ClCompile Include="papu.c" />
     <ClCompile Include="ppu.c" />
+    <ClCompile Include="emulator.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cpu.h" />
+    <ClInclude Include="global.h" />
     <ClInclude Include="ines.h" />
     <ClInclude Include="input.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="mapper.h" />
+    <ClInclude Include="papu.h" />
     <ClInclude Include="ppu.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="types.h" />
+    <ClInclude Include="emulator.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Resource.rc" />

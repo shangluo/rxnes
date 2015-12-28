@@ -6,19 +6,36 @@
 #include "types.h"
 #include "cpu.h"
 
-extern u8 vram[0x10000];
-extern u8 saram[0x100];
-extern u16 screen[240][256];
+extern u8 ppu_vram[0x10000];
+extern u16 ppu_screen_buffer[240][256];
 
 void ppu_init( void );
 void ppu_reset ( void );
+void ppu_reset_status(void);
+void ppu_set_mirror_mode(int mirror_type);
 void ppu_build_tiles( void );
 u32  ppu_render_scanline( u32 n_cycles );
-void ppu_mm_write( u16 addr, u8 data );
-u8 ppu_mm_get( u16 addr );
 void ppu_fill_name_table(u8 *bits, int index);
 void ppu_fill_pattern_table(u8 *bits, int index);
 void ppu_fill_pallete_table(u8 *bits);
+void ppu_register_write(u16 addr, u8 data);
+void ppu_register_read(u16 addr, u8 *buf);
+
+// scroll
+void ppu_scroll_reg_write();
+
+// vram
+void ppu_vram_read();
+void ppu_vram_write();
+void ppu_vram_update_addr();
+void ppu_mm_write( u16 addr, u8 data );
+u8 ppu_mm_get( u16 addr );
+
+// oam
+void ppu_oam_read();
+void ppu_oam_write();
+void ppu_oam_update_addr();
+void ppu_oam_dma(u8 *buf);
 
 //ppu registers
 #define PPU_CTRL_REG1   0x2000

@@ -4,20 +4,66 @@
 
 #include "cpu.h"
 #include "ppu.h"
+#include "papu.h"
 #include "log.h"
 #include "input.h"
 #include "ines.h"
+#include "global.h"
 #include "mapper.h"
 #include <string.h>
 
+//registers pack from 6052
+typedef struct
+{
+	u8 A;
+	u8 X;
+	u8 Y;
+
+	union
+	{
+		struct
+		{
+			u8 C : 1;
+			u8 Z : 1;
+			u8 I : 1;
+			u8 D : 1;
+			u8 B : 1;
+			u8 R : 1;
+			u8 V : 1;
+			u8 N : 1;
+		} SR;
+		u8 FLAGS;
+	};
+	u8 SP;
+
+	union
+	{
+		struct
+		{
+			u8 PCL;
+			u8 PCH;
+		};
+		u16 PC;
+	};
+} cpu_registers;
+
+int irq_pending;
+
 //registers
-registers regs;
+static cpu_registers regs;
+
+//flags
+#define CF regs.SR.C
+#define ZF regs.SR.Z
+#define IF regs.SR.I
+#define DF regs.SR.D
+#define BF regs.SR.B
+#define RF regs.SR.R
+#define VF regs.SR.V
+#define NF regs.SR.N
 
 //memroy
 u8 memory[0x10000];
-
-//sprite attribute memory
-extern u8 oam[0x100];
 
 //
 extern u8 mmc3_irq_enabled;
@@ -26,259 +72,163 @@ extern u8 mmc3_irq_counter;
 //
 extern ines_rom *c_rom;
 
-//ppu address for writing and reading
-static u16 ppu_addr;
-static u8  b_tongle;
-static u8  first_time;
-
-//spr address
-static u8 spr_addr;
-
-//mirror type
-extern u8 mirror;
-
 //ppu position
-extern u8 cam_x, cam_y;
 u32 cpu_cycles;
+u32 cpu_cycles_count;
+
+//
+static u8 cpu_nmi_pending;
 
 static void cpu_handle_io( u16 reg );
 static void cpu_handle_dma( void );
 static void cpu_handle_irq(void);
 static void cpu_handle_nmi( void );
+//stack operation
+static void cpu_stack_push(u8 data);
+static u8   cpu_stack_pop();
+
 
 u8 opcode_cycles[] = {
-    0x7, 0x6, 0x0, 0x8, 0x3,
-    0x3, 0x5, 0x5, 0x3, 0x2,
-    0x2, 0x2, 0x4, 0x4, 0x6,
-    0x6, 0x3, 0x5, 0x0, 0x8,
-    0x4, 0x4, 0x6, 0x6, 0x2,
-    0x4, 0x2, 0x7, 0x4, 0x4,
-    0x7, 0x7, 0x6, 0x6, 0x0,
-    0x8, 0x3, 0x3, 0x5, 0x5,
-    0x4, 0x2, 0x2, 0x2, 0x4,
-    0x4, 0x6, 0x6, 0x2, 0x5,
-    0x0, 0x8, 0x4, 0x4, 0x6,
-    0x6, 0x2, 0x4, 0x2, 0x7,
-    0x4, 0x4, 0x7, 0x7, 0x6,
-    0x6, 0x0, 0x8, 0x3, 0x3,
-    0x5, 0x5, 0x3, 0x2, 0x2,
-    0x2, 0x3, 0x4, 0x6, 0x6,
-    0x3, 0x5, 0x0, 0x8, 0x4,
-    0x4, 0x6, 0x6, 0x2, 0x4,
-    0x2, 0x7, 0x4, 0x4, 0x7,
-    0x7, 0x6, 0x6, 0x0, 0x8,
-    0x3, 0x3, 0x5, 0x5, 0x4,
-    0x2, 0x2, 0x2, 0x5, 0x4,
-    0x6, 0x6, 0x2, 0x5, 0x0,
-    0x8, 0x4, 0x4, 0x6, 0x6,
-    0x2, 0x4, 0x2, 0x7, 0x4,
-    0x4, 0x7, 0x7, 0x2, 0x6,
-    0x2, 0x6, 0x3, 0x3, 0x3,
-    0x3, 0x2, 0x2, 0x2, 0x2,
-    0x4, 0x4, 0x4, 0x4, 0x3,
-    0x6, 0x0, 0x6, 0x4, 0x4,
-    0x4, 0x4, 0x2, 0x5, 0x2,
-    0x5, 0x5, 0x5, 0x5, 0x5,
-    0x2, 0x6, 0x2, 0x6, 0x3,
-    0x3, 0x3, 0x3, 0x2, 0x2,
-    0x2, 0x2, 0x4, 0x4, 0x4,
-    0x4, 0x2, 0x5, 0x0, 0x5,
-    0x4, 0x4, 0x4, 0x4, 0x2,
-    0x4, 0x2, 0x4, 0x4, 0x4,
-    0x4, 0x4, 0x2, 0x6, 0x2,
-    0x8, 0x3, 0x3, 0x5, 0x5,
-    0x2, 0x2, 0x2, 0x2, 0x4,
-    0x4, 0x6, 0x6, 0x3, 0x5,
-    0x0, 0x8, 0x4, 0x4, 0x6,
-    0x6, 0x2, 0x4, 0x2, 0x7,
-    0x4, 0x4, 0x7, 0x7, 0x2,
-    0x6, 0x2, 0x8, 0x3, 0x3,
-    0x5, 0x5, 0x2, 0x2, 0x2,
-    0x2, 0x4, 0x4, 0x6, 0x6,
-    0x2, 0x5, 0x0, 0x8, 0x4,
-    0x4, 0x6, 0x6, 0x2, 0x4,
-    0x2, 0x7, 0x4, 0x4, 0x7,
-    0x7
+    0x7, 0x6, 0x0, 0x8, 0x3, // 0
+    0x3, 0x5, 0x5, 0x3, 0x2, // 5
+    0x2, 0x2, 0x4, 0x4, 0x6, // 10
+    0x6, 0x3, 0x5, 0x0, 0x8, // 15
+    0x4, 0x4, 0x6, 0x6, 0x2, // 20
+    0x4, 0x2, 0x7, 0x4, 0x4, // 25 
+    0x7, 0x7, 0x6, 0x6, 0x0, // 30
+    0x8, 0x3, 0x3, 0x5, 0x5, // 35
+    0x4, 0x2, 0x2, 0x2, 0x4, // 40
+    0x4, 0x6, 0x6, 0x2, 0x5, // 45
+    0x0, 0x8, 0x4, 0x4, 0x6, // 50
+    0x6, 0x2, 0x4, 0x2, 0x7, // 55
+    0x4, 0x4, 0x7, 0x7, 0x6, // 60
+    0x6, 0x0, 0x8, 0x3, 0x3, // 65
+    0x5, 0x5, 0x3, 0x2, 0x2, // 70
+    0x2, 0x3, 0x4, 0x6, 0x6, // 75
+    0x3, 0x5, 0x0, 0x8, 0x4, // 80
+    0x4, 0x6, 0x6, 0x2, 0x4, // 85
+    0x2, 0x7, 0x4, 0x4, 0x7, // 90
+    0x7, 0x6, 0x6, 0x0, 0x8,  // 95
+    0x3, 0x3, 0x5, 0x5, 0x4, // 100
+    0x2, 0x2, 0x2, 0x5, 0x4, // 105
+    0x6, 0x6, 0x2, 0x5, 0x0, // 110
+    0x8, 0x4, 0x4, 0x6, 0x6, // 115
+    0x2, 0x4, 0x2, 0x7, 0x4,  // 120
+    0x4, 0x7, 0x7, 0x2, 0x6, // 125 
+    0x2, 0x6, 0x3, 0x3, 0x3, //130
+    0x3, 0x2, 0x2, 0x2, 0x2, //135
+    0x4, 0x4, 0x4, 0x4, 0x3, //140
+    0x6, 0x0, 0x6, 0x4, 0x4, //145
+    0x4, 0x4, 0x2, 0x5, 0x2, // 150
+    0x5, 0x5, 0x5, 0x5, 0x5, // 155
+    0x2, 0x6, 0x2, 0x6, 0x3, // 160
+    0x3, 0x3, 0x3, 0x2, 0x2, // 165
+    0x2, 0x2, 0x4, 0x4, 0x4, //170
+    0x4, 0x2, 0x5, 0x0, 0x5, // 175 
+    0x4, 0x4, 0x4, 0x4, 0x2, // 180
+    0x4, 0x2, 0x4, 0x4, 0x4, // 185
+    0x4, 0x4, 0x2, 0x6, 0x2, // 190
+    0x8, 0x3, 0x3, 0x5, 0x5, // 195
+    0x2, 0x2, 0x2, 0x2, 0x4, // 200
+    0x4, 0x6, 0x6, 0x3, 0x5, // 205
+    0x0, 0x8, 0x4, 0x4, 0x6, // 210
+    0x6, 0x2, 0x4, 0x2, 0x7, // 215
+    0x4, 0x4, 0x7, 0x7, 0x2, // 220
+    0x6, 0x2, 0x8, 0x3, 0x3, // 225
+    0x5, 0x5, 0x2, 0x2, 0x2, // 230
+    0x2, 0x4, 0x4, 0x6, 0x6, // 235
+	0x2, 0x5, 0x0, 0x8, 0x4, // 240
+	0x4, 0x6, 0x6, 0x2, 0x4, // 245
+	0x2, 0x7, 0x4, 0x4, 0x7, // 250
+	0x7						 // 255
 };//0x100
 
 #define setflag( flag, val )                                                    \
+		do																		\
         {                                                                       \
             if ( val )                                                          \
                 flag = 1;                                                       \
             else                                                                \
                 flag = 0;                                                       \
-        }
+        } while (0)
 
 //immediately
 #define getimm8( op, bytes )                                                    \
-        {                                                                       \
-            mm_get( regs.PC + 1, op );                                          \
+        do																		\
+		{                                                                       \
+            cpu_mm_get( regs.PC + 1, op );                                      \
             bytes = 2;                                                          \
-        }
+        } while (0)
 
 //zero page with X or Y
 //NOTICE!!:Zero Page MUST BE WRAP AROUND!!
 #define getzeroXY( op, addr, bytes, XF, YF )                                    \
-        {                                                                       \
+        do																		\
+		{                                                                       \
             u8 off;                                                             \
-            mm_get( regs.PC + 1, off );                                         \
+            cpu_mm_get( regs.PC + 1, off );                                     \
             if ( XF )                                                           \
                 addr = ( off + regs.X ) % 0x100;                                \
             else if ( YF )                                                      \
                 addr = ( off + regs.Y ) % 0x100;                                \
             else                                                                \
                 addr = off;                                                     \
-            mm_get( addr, op );                                                 \
+            cpu_mm_get( addr, op );												\
             bytes = 2;                                                          \
-        }
+        } while(0)
+
+#define getabsXYCross( op, addr, bytes, XF, YF, cross )                             \
+		do																			\
+        {                                                                           \
+			cpu_mm_read( regs.PC + 1, (u8 *)&addr, sizeof ( addr ) );               \
+			if ( XF )                                                               \
+			    addr += regs.X;                                                     \
+			else if ( YF )                                                          \
+			    addr += regs.Y;														\
+			if (cross)																\
+			{																		\
+				if ((addr & 0xff) == 0xff)											\
+				{																	\
+					cpu_cycles += 1;												\
+				}																	\
+			}																		\
+			cpu_mm_get( addr, op );                                                 \
+			bytes = 3;                                                              \
+        }while (0)
 
 //aboslute with X or Y
 #define getabsXY( op, addr, bytes, XF, YF )                                         \
-        {                                                                           \
-        cpu_mm_read( regs.PC + 1, (u8 *)&addr, sizeof ( addr ) );                   \
-        if ( XF )                                                                   \
-            addr += regs.X;                                                         \
-        else if ( YF )                                                              \
-            addr += regs.Y;                                                         \
-        mm_get( addr, op );                                                         \
-        bytes = 3;                                                                  \
-        }
+		getabsXYCross(op, addr, bytes, XF, YF, 0)
+
+#define getindirectXYCross( op, addr, bytes, XF, YF, cross )				\
+	do																		\
+	{																		\
+																			\
+		u8 off;                                                             \
+		cpu_mm_get(regs.PC + 1, off);                                       \
+		if (XF)                                                             \
+		{                                                                   \
+			off = (off + regs.X) % 0x100;                                   \
+			cpu_mm_read(off, (u8 *)&addr, sizeof(addr));                    \
+		}                                                                   \
+		else if (YF)                                                        \
+		{                                                                   \
+			cpu_mm_read(off, (u8 *)&addr, sizeof(addr));                    \
+			addr = addr + regs.Y;                                           \
+		}                                                                   \
+		if (cross)															\
+		{																	\
+			if ((addr & 0xff) == 0xff)										\
+			{																\
+				cpu_cycles += 1;											\
+			}																\
+		}																	\
+		cpu_mm_get(addr, op);												\
+		bytes = 2;															\
+	} while(0)
 
 #define getindirectXY( op, addr, bytes, XF, YF )                                \
-        {                                                                       \
-            u8 off;                                                             \
-            mm_get( regs.PC + 1, off );                                         \
-            if ( XF )                                                           \
-            {                                                                   \
-                off = ( off + regs.X ) % 0x100;                                 \
-                cpu_mm_read( off, (u8 *)&addr, sizeof( addr ));                 \
-            }                                                                   \
-            else if ( YF )                                                      \
-            {                                                                   \
-                cpu_mm_read( off, (u8 *)&addr, sizeof( addr ));                 \
-                addr = addr + regs.Y;                                           \
-            }                                                                   \
-            mm_get( addr, op );                                                 \
-            bytes = 2;                                                          \
-        }
-
-//set one byte to memory
-#define mm_set( addr, data )                \
-        {                                   \
-            u8 _d = data;                   \
-            cpu_mm_write( addr, &_d, 1 );   \
-        }
-
-//get one byte from memory
-#define mm_get( addr, data ) cpu_mm_read( addr, (u8 *)&data, 1 )
-
-static void reset_ppu_status( void )
-{
-    b_tongle = 0;
-    memory[PPU_STATUS] &= 0x7f;
-//  memory[PPU_ADDRESS] = 0x0;
-//  memory[PPU_SCROLL_REG] = 0x0;
-}
-
-static void update_ppu_address( void )
-{
-    u8 paddr;
-    mm_get( PPU_ADDRESS, paddr );
-
-    //set least bits
-    if ( b_tongle == 0 )
-    {
-        //clear
-        ppu_addr = 0;
-
-        ppu_addr |= paddr << 8;
-
-        //update b_tongle
-        b_tongle = ( b_tongle + 1 ) % 2;
-    }
-    //set most bits
-    else
-    {
-        ppu_addr |= paddr;
-        //update b_tongle
-        b_tongle = ( b_tongle + 1 ) % 2;
-
-        //address initialized
-        first_time = 1;
-
-        //log
-        LOG_TRACE( "CPU", "Set PPU_ADDRESS register to %x at %x", ppu_addr, regs.PC );
-    }
-}
-
-static void update_spr_address( void )
-{
-    spr_addr = memory[PPU_SPR_ADDR];
-}
-
-static void write_oam_data( void )
-{
-    oam[spr_addr] = memory[PPU_SPR_DATA];
-    ++spr_addr;
-    ++memory[PPU_SPR_ADDR];
-}
-
-static void write_to_vram( void )
-{
-    u8 ctr1;
-
-    ppu_mm_write( ppu_addr, memory[PPU_DATA] );
-
-    //do increacement
-    mm_get( PPU_CTRL_REG1, ctr1);
-    if ( ctr1 & 0x4 )
-    {
-        memory[PPU_ADDRESS] += 32;
-        ppu_addr += 32;
-    }
-    else
-    {
-        ++memory[PPU_ADDRESS];
-        ++ppu_addr;
-    }
-}
-
-
-static void read_from_oam( void )
-{
-    memory[PPU_SPR_DATA] = oam[spr_addr];
-    ++spr_addr;
-    ++memory[PPU_SPR_ADDR];
-}
-
-static void read_from_vram( void )
-{
-	u8 ctr1;
-
-    //first time read
-    //return a dummy value
-    if ( first_time )
-    {
-        first_time = 0;
-        return;
-    }
-
-    memory[PPU_DATA] = ppu_mm_get( ppu_addr );
-
-	//do increacement
-	mm_get(PPU_CTRL_REG1, ctr1);
-	if (ctr1 & 0x4)
-	{
-		memory[PPU_ADDRESS] += 32;
-		ppu_addr += 32;
-	}
-	else
-	{
-		++memory[PPU_ADDRESS];
-		++ppu_addr;
-	}
-}
-
+		getindirectXYCross(op, addr, bytes, XF, YF, 0)
 
 //instructions
 static u8 ADC(u8 opcode)
@@ -288,6 +238,7 @@ static u8 ADC(u8 opcode)
     u16 address = 0;
     u8 carry = CF;
     u8 operand = 0;
+	u8 a = regs.A;
     switch( opcode )
     {
     case 0x69:
@@ -307,11 +258,11 @@ static u8 ADC(u8 opcode)
         break;
 
     case 0x7d:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1);
         break;
 
     case 0x79:
-        getabsXY( operand, address, bytes , 0, 1 );
+		getabsXYCross( operand, address, bytes , 0, 1, 1);
         break;
 
     case 0x61:
@@ -320,7 +271,7 @@ static u8 ADC(u8 opcode)
 
     case 0x71:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1);
         break;
 
     default:
@@ -333,7 +284,7 @@ static u8 ADC(u8 opcode)
     setflag( CF, result & 0x100 );
     setflag( ZF, regs.A == 0 );
     setflag( NF, regs.A & 0x80 );
-    setflag( VF, ( regs.A & 0x80 ) != ( result & 0x80 ) );
+    setflag( VF, (result ^ a) & ( result ^ operand ) & 0x80);
 
     return bytes;
 }
@@ -362,11 +313,11 @@ static u8 AND(u8 opcode)
         break;
 
     case 0x3d:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1);
         break;
 
     case 0x39:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1);
         break;
 
     case 0x21:
@@ -375,7 +326,7 @@ static u8 AND(u8 opcode)
 
     case 0x31:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1);
         break;
 
     default:
@@ -431,7 +382,7 @@ static u8 ASL(u8 opcode)
     setflag( ZF, operand == 0 );
     setflag( NF, operand & 0x80 );
 
-    mm_set( address, operand );
+    cpu_mm_set( address, operand );
     return bytes;
 }
 
@@ -441,7 +392,7 @@ static u8 BCC()
     if ( CF == 0 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -457,7 +408,7 @@ static u8 BCS()
     if ( CF == 1 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -472,7 +423,7 @@ static u8 BEQ()
     if ( ZF == 1 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -512,7 +463,7 @@ static u8 BMI()
     if ( NF == 1 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -528,7 +479,7 @@ static u8 BNE()
     if ( ZF == 0 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -544,7 +495,7 @@ static u8 BPL()
     if ( NF == 0 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -557,10 +508,10 @@ static u8 BPL()
 static u8 BRK()
 {
     //push sr
-    push( regs.PCH );
-    push( regs.PCL );
+    cpu_stack_push( regs.PCH );
+    cpu_stack_push( regs.PCL );
 
-    push( regs.FLAGS );
+    cpu_stack_push( regs.FLAGS );
 
     setflag(IF, 1);
 	setflag(BF, 1);
@@ -568,7 +519,7 @@ static u8 BRK()
 
     //jmp
     cpu_mm_read( 0xfffe, (u8 *)&regs.PC, sizeof ( regs.PC ) );
-    return 0;
+    return 2;
 }
 
 static u8 BVC()
@@ -578,7 +529,7 @@ static u8 BVC()
     if ( VF == 0 )
     {
         //get
-        mm_get( regs.PC + 1, offset );
+        cpu_mm_get( regs.PC + 1, offset );
         regs.PC = regs.PC + offset + 2;
         return 0;
     }
@@ -593,7 +544,7 @@ static u8 BVS()
     s8 offset = 0;
 
     //get
-    mm_get( regs.PC + 1, offset );
+    cpu_mm_get( regs.PC + 1, offset );
 
     if ( VF == 1 )
     {
@@ -654,12 +605,12 @@ static u8 CMP( u8 opcode )
         break;
 
     case 0xdd:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1);
         bytes = 3;
         break;
 
     case 0xd9:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1);
         bytes = 3;
         break;
 
@@ -669,7 +620,7 @@ static u8 CMP( u8 opcode )
 
     case 0xd1:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1 );
         break;
 
     default:
@@ -777,7 +728,7 @@ static u8 DEC( u8 opcode )
     setflag( ZF, operand == 0 );
     setflag( NF, operand & 0x80 );
     //write back
-    mm_set( address, operand );
+    cpu_mm_set( address, operand );
     return bytes;
 }
 
@@ -825,11 +776,11 @@ static u8 EOR( u8 opcode )
         break;
 
     case 0x5d:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1);
         break;
 
     case 0x59:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1);
         break;
 
     case 0x41:
@@ -838,7 +789,7 @@ static u8 EOR( u8 opcode )
 
     case 0x51:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1);
         break;
 
     default:
@@ -885,7 +836,7 @@ static u8 INC( u8 opcode )
     setflag( ZF, operand == 0 );
     setflag( NF, operand & 0x80 );
     //write back
-    mm_set( address, operand );
+    cpu_mm_set( address, operand );
     return bytes;
 }
 
@@ -911,6 +862,7 @@ static u8 INY()
 
 static u8 JMP( u8 opcode )
 {
+	u8 addr_low, addr_high;
     u16 address = 0;
     u16 old_pc = regs.PC;
 
@@ -924,7 +876,18 @@ static u8 JMP( u8 opcode )
     if ( opcode == 0x6c )
     {
         cpu_mm_read( regs.PC + 1, (u8 *)&address, sizeof ( address ) );
-        cpu_mm_read( address, (u8 *)&regs.PC, sizeof ( regs.PC ) );
+
+		// jmp shouldn't across page boundary
+		if ((address & 0xff) == 0xff)
+		{
+			cpu_mm_get(address, addr_low);
+			cpu_mm_get(address & 0xff00, addr_high);
+			regs.PC = addr_low | (addr_high << 8);
+		}
+		else
+		{
+			cpu_mm_read( address, (u8 *)&regs.PC, sizeof ( regs.PC ) );
+		}
         LOG_TRACE( "JMP[Table]", "Excute JMP from 0x%x, to 0x%x", old_pc, regs.PC );
         return 0;
     }
@@ -939,8 +902,8 @@ static u8 JSR()
     //yes it's quite wrong!!
     //push( regs.PCH );
     //push( regs.PCL + 3 - 1 );
-    push( ( old_pc >> 8 ) & 0xff );
-    push( old_pc & 0xff );
+    cpu_stack_push( ( old_pc >> 8 ) & 0xff );
+    cpu_stack_push( old_pc & 0xff );
 
 //  LOG_TRACE( "JSR", "CURRENT SP IS %X", regs.SP );
 
@@ -977,11 +940,11 @@ static u8 LDA( u8 opcode )
         break;
 
     case 0xbd:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1 );
         break;
 
     case 0xb9:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1 );
         break;
 
     case 0xa1:
@@ -990,7 +953,7 @@ static u8 LDA( u8 opcode )
 
     case 0xb1:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1 );
         break;
 
     default:
@@ -1028,7 +991,7 @@ static u8 LDX( u8 opcode )
         break;
 
     case 0xbe:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1 );
         break;
 
     default:
@@ -1067,7 +1030,7 @@ static u8 LDY( u8 opcode )
         break;
 
     case 0xbc:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1 );
         break;
 
     default:
@@ -1124,7 +1087,7 @@ static u8 LSR( u8 opcode )
     setflag( ZF, operand == 0 );
     setflag( NF, operand & 0x80 );
 
-    mm_set( address, operand );
+    cpu_mm_set( address, operand );
     return bytes;
 }
 
@@ -1157,11 +1120,11 @@ static u8 ORA( u8 opcode )
         break;
 
     case 0x1d:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1 );
         break;
 
     case 0x19:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1 );
         break;
 
     case 0x01:
@@ -1170,7 +1133,7 @@ static u8 ORA( u8 opcode )
 
     case 0x11:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1);
         break;
 
     default:
@@ -1188,7 +1151,7 @@ static u8 ORA( u8 opcode )
 
 static u8 PHA()
 {
-    push( regs.A );
+    cpu_stack_push( regs.A );
     LOG_TRACE( "PHA", "Excute PHA at 0x%x, push 0x%x to stack, SP = 0x%x", regs.PC, regs.A,regs.SP );
     return 1;
 }
@@ -1197,13 +1160,13 @@ static u8 PHP()
 {
 	setflag(BF, 1);
 	setflag(RF, 1);
-	push( regs.FLAGS );
+	cpu_stack_push( regs.FLAGS );
 	return 1;
 }
 
 static u8 PLA()
 {
-    regs.A = pop();
+    regs.A = cpu_stack_pop();
 
     setflag( ZF, regs.A == 0 );
     setflag( NF, regs.A & 0x80 );
@@ -1214,7 +1177,7 @@ static u8 PLA()
 static u8 PLP()
 {
 	setflag(IF, 0);
-    regs.FLAGS = pop();
+    regs.FLAGS = cpu_stack_pop();
     return 1;
 }
 
@@ -1263,7 +1226,7 @@ static u8 ROL( u8 opcode )
 
     setflag( ZF, operand == 0 );
     setflag( NF, operand & 0x80 );
-    mm_set( address, operand );
+    cpu_mm_set( address, operand );
     return bytes;
 }
 
@@ -1316,23 +1279,20 @@ static u8 ROR( u8 opcode )
     setflag( ZF, operand == 0 );
     setflag( NF, operand & 0x80 );
 
-    mm_set( address, operand );
+    cpu_mm_set( address, operand );
     return bytes;
 
 }
 
 static u8 RTI()
 {
-
     LOG_TRACE( "RTI", "RTI occur at 0x%x", regs.PC );
     //popup sr
-    regs.FLAGS = pop();
-
-	setflag(IF, 0);
+    regs.FLAGS = cpu_stack_pop();
 
     //popup pc
-    regs.PCL = pop();
-    regs.PCH = pop();
+    regs.PCL = cpu_stack_pop();
+    regs.PCH = cpu_stack_pop();
 
     return 0;
 }
@@ -1340,8 +1300,8 @@ static u8 RTI()
 static u8 RTS()
 {
     u16 old_pc = regs.PC;
-    regs.PCL = pop();
-    regs.PCH = pop();
+    regs.PCL = cpu_stack_pop();
+    regs.PCH = cpu_stack_pop();
     LOG_TRACE( "RTS", "Excute RTS from 0x%x, to 0x%x", old_pc, regs.PC );
 //  LOG_TRACE( "RTS", "CURRENT SP IS %X", regs.SP );
     return 1;
@@ -1354,6 +1314,7 @@ static u8 SBC( u8 opcode )
     u16 address = 0;
     u8 carry = CF;
     u8 operand = 0;
+	u8 a = regs.A;
     switch( opcode )
     {
     case 0xe9:
@@ -1373,11 +1334,11 @@ static u8 SBC( u8 opcode )
         break;
 
     case 0xfd:
-        getabsXY( operand, address, bytes , 1, 0 );
+        getabsXYCross( operand, address, bytes , 1, 0, 1 );
         break;
 
     case 0xf9:
-        getabsXY( operand, address, bytes , 0, 1 );
+        getabsXYCross( operand, address, bytes , 0, 1, 1 );
         break;
 
     case 0xe1:
@@ -1386,7 +1347,7 @@ static u8 SBC( u8 opcode )
 
     case 0xf1:
         //post
-        getindirectXY ( operand, address, bytes, 0, 1 );
+        getindirectXYCross ( operand, address, bytes, 0, 1, 1 );
         break;
 
     default:
@@ -1395,10 +1356,10 @@ static u8 SBC( u8 opcode )
 
     result = regs.A - operand - ( 1 - carry );
     regs.A = result & 0xff;
-    setflag( CF, result < 0x100 );
+    setflag( CF, !(result & 0x100) );
     setflag( ZF, regs.A == 0 );
     setflag( NF, regs.A & 0x80 );
-    setflag( VF, regs.A & 0x80 || result >= 0x80 );
+    setflag( VF, (a ^ operand) & ( a^ result) & 0x80 );
 
     return bytes;
 
@@ -1431,14 +1392,14 @@ static u8 STA( u8 opcode )
         //FIXEDME!:!!DON'T FORGET WRAP AROUND IN ZERO PAGE
         //zero
     case 0x85:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address = off;
         bytes = 2;
         break;
 
         //zeroX
     case 0x95:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address = ( off + regs.X ) % 0x100;
         bytes = 2;
         break;
@@ -1463,7 +1424,7 @@ static u8 STA( u8 opcode )
 
         //indirectX
     case 0x81:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address = ( off + regs.X ) % 0x100;
         cpu_mm_read( address, (u8 *)&address, 2 );
         bytes = 2;
@@ -1471,7 +1432,7 @@ static u8 STA( u8 opcode )
 
     case 0x91:
         //post
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         cpu_mm_read( off, (u8 *)&address, 2 );
         address += regs.Y;
         bytes = 2;
@@ -1481,7 +1442,7 @@ static u8 STA( u8 opcode )
         break;
     }
 
-    mm_set( address, regs.A );
+    cpu_mm_set( address, regs.A );
     return bytes;
 }
 
@@ -1493,13 +1454,13 @@ static u8 STX( u8 opcode )
     switch( opcode )
     {
     case 0x86:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address = off;
         bytes = 2;
         break;
 
     case 0x96:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address = ( off + regs.Y ) % 0x100 ;
         bytes = 2;
         break;
@@ -1513,7 +1474,7 @@ static u8 STX( u8 opcode )
         break;
     }
 
-    mm_set( address, regs.X );
+    cpu_mm_set( address, regs.X );
     return bytes;
 }
 
@@ -1525,13 +1486,13 @@ static u8 STY( u8 opcode )
     switch( opcode )
     {
     case 0x84:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address = off;
         bytes = 2;
         break;
 
     case 0x94:
-        mm_get( regs.PC + 1, off );
+        cpu_mm_get( regs.PC + 1, off );
         address =  ( off + regs.X ) % 0x100;
         bytes = 2;
         break;
@@ -1545,7 +1506,7 @@ static u8 STY( u8 opcode )
         break;
     }
 
-    mm_set( address, regs.Y );
+    cpu_mm_set( address, regs.Y );
 
     return bytes;
 }
@@ -1601,7 +1562,7 @@ static u8 TYA()
 }
 
 
-void cpu_reset( void )
+void cpu_init( void )
 {
     u8 buf = 0;
     //sp decreace
@@ -1611,7 +1572,7 @@ void cpu_reset( void )
     IF = 1;
 
     //apu mute
-    mm_set( 0x4017, buf );
+    cpu_mm_set( 0x4017, buf );
 
     //regs.PC = memory[0xfffc] | ( memory[0xfffd] << 8 );
     cpu_mm_read( 0xfffc, (u8 *)&regs.PC, sizeof ( regs.PC ));
@@ -1626,7 +1587,7 @@ u32  cpu_execute_translate( u32 n_cycles )
     while(  cpu_cycles < n_cycles )
     {
         //fetch one opcode
-        mm_get( regs.PC, opcode );
+        cpu_mm_get( regs.PC, opcode );
 //      LOG_TRACE( "CPU", "PC AT %X", regs.PC );
 
         switch( opcode )
@@ -1975,12 +1936,13 @@ u32  cpu_execute_translate( u32 n_cycles )
         }
 
         cpu_cycles += opcode_cycles[ opcode ];
+		cpu_cycles_count += opcode_cycles[opcode];
 
         //update PC
         regs.PC += bytes;
 
 		//check irq
-		// cpu_handle_irq();
+		cpu_handle_irq();
 
         //check nmi
         cpu_handle_nmi();
@@ -1992,19 +1954,19 @@ u32  cpu_execute_translate( u32 n_cycles )
     return cpu_cycles;
 }
 
-void push( u8 data )
+void cpu_stack_push( u8 data )
 {
 //  cpu_mm_write( data, 0x100 + regs.SP );
-    mm_set( 0x100 + regs.SP, data );
+    cpu_mm_set( 0x100 + regs.SP, data );
     regs.SP = regs.SP - 1;
 //  LOG_TRACE( "PUSH", "%X", data );
 }
 
-u8 pop()
+u8 cpu_stack_pop()
 {
     u8 bytes = 0;
     regs.SP += 1;
-    mm_get( regs.SP + 0x100, bytes );
+    cpu_mm_get( regs.SP + 0x100, bytes );
 
 //  LOG_TRACE( "POP", "%X", bytes );
     return bytes;
@@ -2014,6 +1976,17 @@ void cpu_mm_write( u16 addr, u8 *buf, u16 len )
 {
     int i;
     int n_addr;
+
+	if (addr < 0x100)
+	{
+		for (i = 0; i < len; ++i)
+		{
+			memory[addr] = buf[i];
+			addr = (addr + 1) % 0x100;
+		}
+
+		return;
+	}
 
     if ( addr >= 0x8000 &&  c_rom->mapper != 0x0 )
     {
@@ -2050,50 +2023,26 @@ void cpu_mm_write( u16 addr, u8 *buf, u16 len )
     cpu_handle_io( addr );
 }
 
-void cpu_handle_io( u16 reg )
+void cpu_handle_io( u16 addr )
 {
     //
     u8 mem;
 
-    switch ( reg )
-    {
-    case PPU_CTRL_REG1:
-        break;
+	// papu
+	if (addr >= 0x4000 && addr < 0x4013
+		|| addr == 0x4015
+		|| addr == 0x4017)
+	{
+		papu_register_write(addr, memory[addr]);
+	}
 
-    case PPU_CTRL_REG2:
-        break;
+	if (addr >= PPU_CTRL_REG1 && addr <= PPU_DATA)
+	{
+		ppu_register_write(addr, memory[addr]);
+	}
 
-    case PPU_STATUS:
-        break;
-
-    case PPU_ADDRESS:
-        update_ppu_address();
-        break;
-
-    case PPU_DATA:
-        write_to_vram();
-        break;
-
-    case PPU_SPR_ADDR:
-        update_spr_address();
-        break;
-
-    case PPU_SPR_DATA:
-        write_oam_data();
-        break;
-
-    case PPU_SCROLL_REG:
-        if ( b_tongle )
-        {
-            cam_y = memory[PPU_SCROLL_REG];
-
-        } else
-        {
-            cam_x = memory[PPU_SCROLL_REG];
-        }
-        b_tongle = ( b_tongle + 1 ) % 2;
-        break;
-
+	switch (addr)
+	{
     case SPR_DMA:
         cpu_handle_dma();
         break;
@@ -2119,28 +2068,37 @@ void cpu_handle_io( u16 reg )
 
 void cpu_mm_read( u16 addr, u8 *buf, u16 len )
 {
-    if ( addr == PPU_DATA )
-    {
-        read_from_vram();
-    }
-    else if ( addr == PPU_SPR_DATA )
-    {
-        read_from_vram();
-    }
-    else if ( addr == PPU_STATUS )
-    {
-        memcpy( buf, memory + addr, 1 );
-        reset_ppu_status();
+	u8 i;
 
-        return;
-    }
-    else if ( addr == JOYPAD_1 )
+	// zero page
+	if (addr < 0x100)
+	{
+		for (i = 0; i < len; ++i)
+		{
+			buf[i] = memory[addr];
+			addr = (addr + 1) % 0x100;
+		}
+
+		return;
+	}
+	else if (addr == PPU_DATA || addr == PPU_SPR_DATA || addr == PPU_STATUS)
+	{
+		ppu_register_read(addr, buf);
+		return;
+	}
+	else if (addr == JOYPAD_1)
     {
         //joypad1
-
         memory[addr] = input_get_next_state();
 //      return;
     }
+
+	// papu
+	if (addr == 0x4015 )
+	{
+		memory[addr] = papu_register_read(addr);
+	}
+
 
     memcpy( buf, memory + addr, len );
 }
@@ -2148,15 +2106,18 @@ void cpu_mm_read( u16 addr, u8 *buf, u16 len )
 void cpu_handle_nmi( void )
 {
     // if nmi enable
-    if ( memory[PPU_STATUS] & 0x80 && memory[PPU_CTRL_REG1] & 0x80 )
+    if ( memory[PPU_STATUS] & 0x80 && memory[PPU_CTRL_REG1] & 0x80 && cpu_nmi_pending)
     {
         LOG_TRACE( "NMI", "NMI occur at %x", regs.PC );
+
         //push pc
-        push( regs.PCH );
-        push( regs.PCL );
+        cpu_stack_push( regs.PCH );
+        cpu_stack_push( regs.PCL );
 
         //push sr
-        push( regs.FLAGS );
+        cpu_stack_push( regs.FLAGS );
+
+		setflag(IF, 1);
 
         //jmp to vector table
         //regs.PCL = memory[0xfffa];
@@ -2164,10 +2125,15 @@ void cpu_handle_nmi( void )
         cpu_mm_read( 0xfffa, (u8 *)&regs.PC, sizeof ( regs.PC ) );
 
         //clear flag
-        memory[PPU_STATUS] &= 0x7f;
+		cpu_nmi_pending = 0;
 
         cpu_cycles += 7;
     }
+}
+
+void cpu_set_nmi_pending()
+{
+	cpu_nmi_pending = 1;
 }
 
 void cpu_handle_irq(void)
@@ -2177,11 +2143,11 @@ void cpu_handle_irq(void)
 	{
 		LOG_TRACE("IRQ", "IRQ occur at %x", regs.PC);
 		//push pc
-		push(regs.PCH);
-		push(regs.PCL);
+		cpu_stack_push(regs.PCH);
+		cpu_stack_push(regs.PCL);
 
 		//push sr
-		push(regs.FLAGS);
+		cpu_stack_push(regs.FLAGS);
 
 		setflag(IF, 1);
 
@@ -2194,16 +2160,15 @@ void cpu_handle_irq(void)
 
 void cpu_handle_dma( void )
 {
-    u16 addr = 0;
-    u8 buf[0x100];
-    mm_get( SPR_DMA, addr );
-    addr = 0x100 * addr;
-    cpu_mm_read( addr, buf, 0x100 );
+	u16 addr = 0;
+	u8 buf[0x100];
+	cpu_mm_get(SPR_DMA, addr);
+	addr = 0x100 * addr;
+	cpu_mm_read(addr, buf, 0x100);
 
-    //write to sprite
-    memcpy( oam, buf, 0x100 );
+	ppu_oam_dma(buf);
 
-    cpu_cycles += 512;
+    cpu_cycles += 513;
     LOG_TRACE( "DMA", "Transfer DMA at %x", regs.PC );
 }
 
@@ -2211,12 +2176,12 @@ void cpu_handle_dma( void )
 void cpu_test( void )
 {
     u8 d;
-    mm_set(0x0, 1);
-    mm_set(0x1, 0xff);
-    mm_set(0x3, 0xff);
-    mm_get(0x0, d);
-    mm_get(0x2, d);
-    mm_get(0x3, d);
+    cpu_mm_set(0x0, 1);
+    cpu_mm_set(0x1, 0xff);
+    cpu_mm_set(0x3, 0xff);
+    cpu_mm_get(0x0, d);
+    cpu_mm_get(0x2, d);
+    cpu_mm_get(0x3, d);
 }
 
 typedef enum 
@@ -2870,4 +2835,36 @@ u8 cpu_disassemble_intruction(u16 addr, char *buf, int len)
 	}
 
 	return bytes;
+}
+
+u16 cpu_read_register_value(char *register_name)
+{
+#define BEGIN_REG_SWITCH(val, param, reg)   \
+		if (strcmp(param, #reg) == 0)		\
+		{									\
+			val = regs.##reg;				\
+		}
+#define REG_SWITCH(val, param, reg)			\
+		else BEGIN_REG_SWITCH(val, param, reg)
+
+#define END_REG_SWITCH()
+
+	u16 value;
+	BEGIN_REG_SWITCH(value, register_name, A)
+		REG_SWITCH(value, register_name, X)
+		REG_SWITCH(value, register_name, Y)
+		REG_SWITCH(value, register_name, SP)
+		REG_SWITCH(value, register_name, PC)
+		REG_SWITCH(value, register_name, FLAGS)
+		REG_SWITCH(value, register_name, SR.C)
+		REG_SWITCH(value, register_name, SR.Z)
+		REG_SWITCH(value, register_name, SR.I)
+		REG_SWITCH(value, register_name, SR.D)
+		REG_SWITCH(value, register_name, SR.B)
+		REG_SWITCH(value, register_name, SR.R)
+		REG_SWITCH(value, register_name, SR.V)
+		REG_SWITCH(value, register_name, SR.N)
+	END_REG_SWITCH()
+
+	return value;
 }

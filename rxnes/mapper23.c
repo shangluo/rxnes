@@ -1,12 +1,8 @@
 #include "types.h"
-#include "ppu.h"
-#include "cpu.h"
-#include "ines.h"
 #include "mapper.h"
+#include "ines.h"
 #include <string.h>
 
-extern ines_rom *c_rom;
-extern u8 mirror;
 static u8 chr_bank_no = 0;
 
 void mapper23_handle_chr_switch(u16 addr, u8 data, u16 addr_start, u16 addr_end, u16 offset)
@@ -18,8 +14,7 @@ void mapper23_handle_chr_switch(u16 addr, u8 data, u16 addr_start, u16 addr_end,
 	else if (addr == addr_end)
 	{
 		chr_bank_no |= ((data & 0x1f) << 4);
-		memcpy(vram + offset, c_rom->chr_banks + 1 * 1024 * chr_bank_no, 1 * 1024);
-		ppu_build_tiles();
+		mapper_switch_chr(0, 1, chr_bank_no);
 	}
 }
 
@@ -30,21 +25,14 @@ static void write(u16 addr, u8 data)
 	if (addr == 0x9004 || addr == 0x9006)
 	{
 		prg_swap_mode = data & 0x01;
+		mapper_switch_prg(prg_swap_mode ? 0x8000 : 0xc000, 8, c_rom->prg_cnt * 2 - 2);
 	}
 	else if (addr == 0x8000 ||
 		addr == 0x8002 ||
 		addr == 0x8004 ||
 		addr == 0x8006)
 	{
-		u8 bank_no = data & 0x1f;
-		if (prg_swap_mode)
-		{
-			memcpy(memory + 0xc000, c_rom->prg_banks + 8 * 1024 * bank_no, 8 * 1024);
-		}
-		else
-		{
-			memcpy(memory + 0x8000, c_rom->prg_banks + 8 * 1024 * bank_no, 8 * 1024);
-		}
+		mapper_switch_prg(prg_swap_mode ? 0xc000 : 0x8000, 8, data & 0x1f);
 	}
 	else if (addr == 0xa000 ||
 		addr == 0xa002 ||
@@ -52,12 +40,12 @@ static void write(u16 addr, u8 data)
 		addr == 0xa006)
 	{
 		u8 bank_no = data & 0x1f;
-		memcpy(memory + 0xa000, c_rom->prg_banks + 8 * 1024 * bank_no, 8 * 1024);
+		mapper_switch_prg(0xa000, 8, bank_no);
 	}
 	else if (addr == 0x9000 || addr == 0x9002)
 	{
-		mirror = data & 0x01;
-		mirror = !mirror;
+
+		mapper_set_mirror_mode(!(data & 0x01));
 	}
 
 	mapper23_handle_chr_switch(addr, data, 0xb000, 0xb002, 0x0);

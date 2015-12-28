@@ -54,6 +54,12 @@
     <ClCompile Include="mapper.c">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="emulator.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="mapper33.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cpu.h">
@@ -78,6 +84,15 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="mapper.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="papu.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="global.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

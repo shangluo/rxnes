@@ -1,13 +1,11 @@
 #include "types.h"
-#include "ppu.h"
-#include "cpu.h"
-#include "ines.h"
 #include "mapper.h"
+#include "ines.h"
 #include <string.h>
 
-extern ines_rom *c_rom;
-extern u8 mirror;
+
 u8 mmc3_irq_reload_value = 0;
+u8 mmc3_irq_reload_request = 0;
 u8 mmc3_irq_counter = 0;
 u8 mmc3_irq_enabled = 0;
 
@@ -16,13 +14,14 @@ static void write(u16 addr, u8 data)
 	static u8 bank_selector = 0;
 	static u8 chr_a12_inversion = 0;
 	static u8 prg_rom_bank_mode = 0;
-	static u8 irq_reload = 0;
 	// back select
 	if (addr >= 0x8000 && addr <= 0x9ffe && addr % 2 == 0)
 	{
 		bank_selector = data & 0x07;
 		prg_rom_bank_mode = (data >> 6) & 0x01;
 		chr_a12_inversion = (data >> 7) & 0x01;
+
+		mapper_switch_prg(prg_rom_bank_mode ? 0x8000 : 0xc000, 8, c_rom->prg_cnt * 2 - 2);
 	}
 	else if (addr >= 0x8001 && addr <= 0x9fff && addr % 2 == 1)
 	{
@@ -42,36 +41,31 @@ static void write(u16 addr, u8 data)
 
 		if (bank_selector <= 1)
 		{
-			memcpy(vram + chr_a12_inversion * 0x1000 + bank_selector * 0x800, c_rom->chr_banks + 2 * 1024 * bank_no, 2 * 1024);
+			mapper_switch_chr(chr_a12_inversion * 0x1000 + bank_selector * 0x800, 2, bank_no);
 		}
 		else if (bank_selector > 1 && bank_selector <= 5)
 		{
-			memcpy(vram + !chr_a12_inversion * 0x1000 + (bank_selector - 2) * 0x400, c_rom->chr_banks + 1 * 1024 * bank_no, 1 * 1024);
+			mapper_switch_chr(!chr_a12_inversion * 0x1000 + (bank_selector - 2) * 0x400, 1, bank_no);
 		}
 		else if (bank_selector == 6)
 		{
 			if (prg_rom_bank_mode == 0)
 			{
-				memcpy(memory + 0x8000, c_rom->prg_banks + 8 * 1024 * bank_no, 8 * 1024);
+				mapper_switch_prg(0x8000, 8, bank_no);
 			}
 			else
 			{
-				memcpy(memory + 0xc000, c_rom->prg_banks + 8 * 1024 * bank_no, 8 * 1024);
+				mapper_switch_prg(0xc000, 8, bank_no);
 			}
 		}
 		else if (bank_selector == 7)
 		{
-			memcpy(memory + 0xa000, c_rom->prg_banks + 8 * 1024 * bank_no, 8 * 1024);
-		}
-
-		if (bank_selector < 6)
-		{
-			ppu_build_tiles();
+			mapper_switch_prg(0xa000, 8, bank_no);
 		}
 	}
 	else if (addr >= 0xa000 && addr <= 0xbffe && addr % 2 == 0)
 	{
-		mirror = !(data & 0x01);
+		mapper_set_mirror_mode(!(data & 0x01));
 	}
 	else if (addr >= 0xa001 && addr <= 0xbfff && addr % 2 == 1)
 	{
@@ -86,7 +80,8 @@ static void write(u16 addr, u8 data)
 	}
 	else if (addr >= 0xc001 && addr <= 0xdfff && addr % 2 == 1)
 	{
-		irq_reload = 1;
+		mmc3_irq_reload_request = 1;
+		mmc3_irq_counter = 42;
 	}
 	else if (addr >= 0xe000 && addr <= 0xfffe && addr % 2 == 0)
 	{

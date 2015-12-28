@@ -10,9 +10,8 @@
 #include <stdlib.h>
 
 ines_rom *c_rom;
-u8 mirror;
 
-void ines_loadrom( char *filename )
+void ines_loadrom( const char *filename )
 {
     ines_header header;
     FILE *fp;
@@ -30,22 +29,13 @@ void ines_loadrom( char *filename )
 
     fread( &header, sizeof(header), 1, fp );
 
-    if ( header.misc & 0x1 )
-    {
-        //vertical
-        mirror = 1;
-    }
-    else
-        //horizontal
-        mirror = 0;
+	ppu_set_mirror_mode(header.misc & 0x1);
 
     c_rom = ( ines_rom * )malloc( sizeof( ines_rom ) );
     c_rom->prg_cnt = header.prg_rom;
     c_rom->chr_cnt = header.chr_rom;
     c_rom->mapper = ( ( header.misc & 0xf0 ) >> 4 ) | \
                     ( ( header.misc & 0xf000 ) >> 8 );
-
-	mapper_make_current(c_rom->mapper);
 
     c_rom->prg_banks = ( u8 * )malloc ( 16 * 1024 * header.prg_rom );
     fread( c_rom->prg_banks, 16 * 1024 * header.prg_rom, 1, fp );
@@ -62,7 +52,7 @@ void ines_loadrom( char *filename )
 		c_rom->chr_banks = (u8 *)malloc(8 * 1024 * header.chr_rom);
 		fread(c_rom->chr_banks, 8 * 1024 * header.chr_rom, 1, fp);
 		//load vram
-	    memcpy( vram, c_rom->chr_banks, 8 * 1024 * 1 );
+	    memcpy( ppu_vram, c_rom->chr_banks, 8 * 1024 * 1 );
 	}
 	else
 	{

@@ -2,12 +2,17 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "ppu.h"
 #include "mapper.h"
+#include "cpu.h"
+#include "ines.h"
 
 #define MAPPER_HANDLER_VECTOR_SIZE 256
 static mapper_handler *mapper_handler_vector[MAPPER_HANDLER_VECTOR_SIZE];
 static int mapper_current;
 static mapper_handler *mapper_get_handler(int index);
+
+extern ines_rom *c_rom;
 
 #define mapper_init_n(i)																								\
 		do																												\
@@ -24,6 +29,7 @@ void mapper_init()
 	mapper_init_n(3);
 	mapper_init_n(4);
 	mapper_init_n(23);
+	mapper_init_n(33);
 }
 
 void mapper_uninit()
@@ -70,4 +76,30 @@ mapper_handler *mapper_get_handler(int index)
 	}
 
 	return handler;
+}
+
+void mapper_switch_prg(u16 offset, int size_in_kb, int bank_no)
+{
+	if (bank_no > c_rom->prg_cnt * 16  / size_in_kb)
+	{
+		bank_no &= (c_rom->prg_cnt * 16 / size_in_kb) -	1;
+	}
+
+	memcpy(memory + offset, c_rom->prg_banks + bank_no * 1024 * size_in_kb, 1024 * size_in_kb);
+}
+
+void mapper_switch_chr(u16 offset, int size_in_kb, int bank_no)
+{
+	if (bank_no > c_rom->chr_cnt * 8 / size_in_kb)
+	{
+		bank_no &= (c_rom->chr_cnt * 8 / size_in_kb) - 1;
+	}
+	if (c_rom->chr_cnt > 0)
+		memcpy(ppu_vram + offset, c_rom->chr_banks + bank_no * 1024 * size_in_kb, 1024 * size_in_kb);
+	ppu_build_tiles();
+}
+
+void mapper_set_mirror_mode(u8 mode)
+{
+	ppu_set_mirror_mode(mode);
 }

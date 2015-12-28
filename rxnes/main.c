@@ -1,28 +1,30 @@
-#define RXNES_RENDER_DX9
+//#define RXNES_RENDER_DX9
 
 #include "ines.h"
-#include "mapper.h"
 #include "cpu.h"
+#include "emulator.h"
+#include "papu.h"
 #include "ppu.h"
-#include "log.h"
 #include "input.h"
 #include <stdio.h>
 #include <time.h>
 #include <windows.h>
 #ifdef RXNES_RENDER_DX9
 #include <d3d9.h>
+#pragma comment(lib, "d3d9.lib")
 #endif
 #include <dinput.h>
+#include <dsound.h>
 #include <tchar.h>
 #include "resource.h"
 
-#pragma comment(lib, "d3d9.lib")
 #pragma comment(lib, "dxguid.lib")
 #pragma comment(lib, "dinput8.lib")
+#pragma comment(lib, "dsound.lib")
 
-#define CYCLE_PER_SCANLINE 114
-#define RX_NES_WND_CLASS _T("RXNesWnd")
-#define RX_NES_NAMETABLE_WND_CLASS _T("RXNesNameTableWnd")
+#define RX_NES_WND_CLASS _T("RXNESWnd")
+#define RX_NES_PPU_STATUS_WND_CLASS _T("RXNESPPUStatus_Wnd")
+#define RX_NES_APU_STATUS_WND_CLASS _T("RXNESAPUStatus_Wnd")
 
 static u16 screen2[480][512];
 
@@ -39,9 +41,13 @@ LPVOID g_pScreenBuf;
 LPDIRECTINPUT g_pDInput;
 LPDIRECTINPUTDEVICE g_pDInputDevice;
 
+LPDIRECTSOUND8 g_pDSound;
+LPDIRECTSOUNDBUFFER g_pDSoundBuffer;
+
 HINSTANCE g_hInstance;
-HWND g_hWndNameTable;
+HWND g_hWndPPUStatus;
 HWND g_hWndCpuDebugger;
+HWND g_hWndApuStatus;
 
 int running;
 int pause;
@@ -70,7 +76,7 @@ static void quit( void )
 	running = 0;
 }
 
-void handle_key_event( void )
+void InputHandler( void )
 {
 	#define KEYDOWN(name, key) (name[key] & 0x80)
 
@@ -120,13 +126,7 @@ void handle_key_event( void )
 	}
 }
 
-void powerup( void )
-{
-	regs.FLAGS = 0x34;
-	regs.SP = 0xfd;
-}
-
-LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK PPUStatusWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 {
 	static int i = 0;
 	static HDC hDC;
@@ -190,13 +190,13 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		// name table
 		for (i = 0; i < 4; ++i)
 		{
-			BitBlt(hDC, 256 * (i & 0x1), 240 * ( i >> 1), 256 , 240, hBackgroundDC[i], 0, 0, SRCCOPY);
+			BitBlt(hDC, 256 * (i & 0x1), 240 * (i >> 1), 256, 240, hBackgroundDC[i], 0, 0, SRCCOPY);
 		}
-		
+
 		// pattern table
 		for (i = 4; i < 6; ++i)
 		{
-			StretchBlt(hDC, 256 * (i  - 2), 0, 256, 256, hBackgroundDC[i], 0, 0, 128, 128, SRCCOPY);
+			StretchBlt(hDC, 256 * (i - 2), 0, 256, 256, hBackgroundDC[i], 0, 0, 128, 128, SRCCOPY);
 		}
 
 		// pallete
@@ -236,14 +236,14 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 		// pattern table
 		else if (ptCursor.x >= 512 && ptCursor.x <= 1024 && ptCursor.y >= 0 && ptCursor.y <= 256)
 		{
-			int indexPattern = (ptCursor.x - 512 ) / 256 ;
+			int indexPattern = (ptCursor.x - 512) / 256;
 			_stprintf(szInfomation, _T("Pattern Table #%d"), indexPattern);
 		}
 		// pallete table
 		else if (ptCursor.x >= 512 && ptCursor.x <= 1024 && ptCursor.y >= 256 && ptCursor.y <= 320)
 		{
 			int index = (ptCursor.y - 256) / 32 * 16 + (ptCursor.x - 512) / 32;
-			_stprintf(szInfomation, _T("Pallete Table With Index #%02x"), vram[0x3f00 + index]);
+			_stprintf(szInfomation, _T("Pallete Table With Index #%02x"), ppu_vram[0x3f00 + index]);
 		}
 		else
 		{
@@ -261,10 +261,10 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 			DeleteDC(hBackgroundDC[i]);
 		}
 		DeleteObject(hBlackBrush);
-		g_hWndNameTable = NULL;
+		g_hWndPPUStatus = NULL;
 
 		break;
-		 
+
 	default:
 		break;
 	}
@@ -272,18 +272,132 @@ LRESULT CALLBACK NameTableWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARA
 	return DefWindowProc(hWnd, nMessage, wParam, lParam);
 }
 
-HWND CreateNameTableWnd()
+LRESULT CALLBACK APUStatusWndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
+{
+	static int i, j, k;
+	static HDC hDC;
+	PAINTSTRUCT ps;
+	static u8 soundBuffer1[PAPU_CHANNEL_COUNT];
+	static u8 soundBuffer2[PAPU_CHANNEL_COUNT];
+	static int step = 0xff;
+	static u16 sample;
+	static RECT rtWindow, rtUpdate;
+	static HBRUSH hBlackBrush;
+	static HDC hBackgroundDC = NULL;
+	static HBITMAP hBitmap;
+	static HBITMAP hOldBitmap;
+	static int nTimeStamp;
+	BOOL bInitial = FALSE;
+	static COLORREF colorChannel[PAPU_CHANNEL_COUNT] =
+	{
+		RGB(255, 0, 0), //Pulse 1
+		RGB(0, 255, 0), //Pulse 2
+		RGB(0, 0, 255), //Triangle
+		RGB(0, 255, 255), //Noise
+		RGB(255, 255, 255), //DMC
+	};
+	static HPEN hColoredPens[PAPU_CHANNEL_COUNT];
+	static HPEN hOldPen = NULL;
+	int x1, y1, x2, y2;
+	switch (nMessage)
+	{
+	case WM_CREATE:
+		hDC = GetDC(hWnd);
+		GetClientRect(hWnd, &rtWindow);
+		hBlackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+		hBackgroundDC = CreateCompatibleDC(hDC);
+		hBitmap = CreateCompatibleBitmap(hDC, rtWindow.right, rtWindow.bottom);
+		hOldBitmap = SelectObject(hBackgroundDC, hBitmap);
+		ReleaseDC(hWnd, hDC);
+
+		for (i = 0; i < PAPU_CHANNEL_COUNT; ++i)
+		{
+			hColoredPens[i] = CreatePen(PS_SOLID, 1, colorChannel[i]);
+		}
+		hOldPen = SelectObject(hBackgroundDC, hColoredPens[0]);
+		SetTimer(hWnd, 1, 30, NULL);
+
+	case WM_PAINT:
+		hDC = BeginPaint(hWnd, &ps);
+		ScrollDC(hBackgroundDC, /*-1000 / 512 **/ -30, 0, NULL, NULL, NULL, &rtUpdate);
+		FillRect(hBackgroundDC, &rtUpdate, hBlackBrush);
+		for (i = 0; i < 4; ++i)
+		{
+			bInitial = TRUE;
+			soundBuffer1[i] = papu_get_sound_channel(i);
+
+			//for (int j = 0; j < 1; j += step)
+			//{
+			//	x = i /*% 2 * 256*/ + j / step * 2;
+				x1 = rtUpdate.left;
+
+			//	sample = 0;
+			//	for (k = 0; k < step; ++k)
+			//	{
+			//		sample += soundBuffer[j + k];
+			//	}
+			//	sample /= step;
+
+				y1 = (int)(i /*/ 2*/ * (rtWindow.bottom / 4) + rtWindow.bottom / 8 + (*(char *)&soundBuffer2[i] / 256.0) * 128 * (256 / 32));
+				x2 = rtUpdate.right;
+				y2 = (int)(i /*/ 2*/ * (rtWindow.bottom / 4) + rtWindow.bottom / 8 + (*(char *)&soundBuffer1[i] / 256.0) * 128 * (256 / 32));
+			//	//SetPixelV(hBackgroundDC, x, y, colorChannel[i]);
+			//	if (bInitial)
+				{
+					SelectObject(hBackgroundDC, hColoredPens[i]);
+					MoveToEx(hBackgroundDC, x1, y1, NULL);
+					bInitial = FALSE;
+				}
+				//else
+				{
+					LineTo(hBackgroundDC, x2, y2);
+				}
+			//}
+			memcpy(soundBuffer2, soundBuffer1, sizeof(soundBuffer1));
+		}
+
+		BitBlt(hDC, 0, 0, rtWindow.right, rtWindow.bottom, hBackgroundDC, 0, 0, SRCCOPY);
+
+		EndPaint(hWnd, &ps);
+		break;
+
+	case WM_TIMER:
+		nTimeStamp += 30;
+		InvalidateRect(hWnd, NULL, FALSE);
+		break;
+
+	case WM_DESTROY:
+		DeleteObject(hBlackBrush);
+		SelectObject(hBackgroundDC, hOldPen);
+		SelectObject(hBackgroundDC, hOldBitmap);
+		DeleteObject(hBitmap);
+		for (i = 0; i < PAPU_CHANNEL_COUNT; ++i)
+		{
+			DeleteObject(hColoredPens[i]);
+		}
+		DeleteDC(hBackgroundDC);
+		g_hWndApuStatus = NULL;
+		break;
+
+	default:
+		break;
+	}
+
+	return DefWindowProc(hWnd, nMessage, wParam, lParam);
+}
+
+HWND RXCreateWindow(LPCTSTR szClassName, LPCTSTR szWindowTitle, UINT nWidowWidth, UINT nWindowHeight, WNDPROC wndProc)
 {
 	WNDCLASS wndClass;
 
-	if (!GetClassInfo(g_hInstance, RX_NES_NAMETABLE_WND_CLASS, &wndClass))
+	if (!GetClassInfo(g_hInstance, szClassName, &wndClass))
 	{
 		ZeroMemory(&wndClass, sizeof(wndClass));
 		wndClass.hCursor = LoadCursor(NULL, IDC_ARROW);
 		wndClass.hInstance = g_hInstance;
-		wndClass.lpfnWndProc = NameTableWndProc;
+		wndClass.lpfnWndProc = wndProc;
 		wndClass.style = CS_VREDRAW | CS_HREDRAW;
-		wndClass.lpszClassName = RX_NES_NAMETABLE_WND_CLASS;
+		wndClass.lpszClassName = szClassName;
 
 		if (!RegisterClass(&wndClass))
 		{
@@ -292,10 +406,10 @@ HWND CreateNameTableWnd()
 	}
 
 	RECT rt;
-	SetRect(&rt, 0, 0, 256 * 4, 480);
+	SetRect(&rt, 0, 0, nWidowWidth, nWindowHeight);
 	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, FALSE);
-
-	HWND hWnd = CreateWindow(RX_NES_NAMETABLE_WND_CLASS, _T("Name Tables & Pattern Table"), WS_OVERLAPPEDWINDOW & (~(WS_SIZEBOX | WS_MAXIMIZEBOX)), CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, g_hInstance, NULL);
+	
+	HWND hWnd = CreateWindow(szClassName, szWindowTitle, WS_OVERLAPPEDWINDOW & (~(WS_SIZEBOX | WS_MAXIMIZEBOX)), CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, g_hInstance, NULL);
 	if (!hWnd)
 	{
 		return NULL;
@@ -374,7 +488,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 		TCHAR szText[10];
 
 	#define MODIFY_REG_VALUE(reg_name) \
-		_stprintf(szText, _T("%02X"), regs.##reg_name); \
+		_stprintf(szText, _T("%02X"), cpu_read_register_value(#reg_name)); \
 		SetDlgItemText(hDlg, IDC_EDIT_REG_##reg_name, szText);
 
 		MODIFY_REG_VALUE(A);
@@ -385,7 +499,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 	#undef MODIFY_REG_VALUE
 
 	#define MODIFY_CHECKBOX(reg_name) \
-		SendDlgItemMessage(hDlg, IDC_CHECK_REG_FLAG_##reg_name, BM_SETCHECK, regs.SR.##reg_name == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+		SendDlgItemMessage(hDlg, IDC_CHECK_REG_FLAG_##reg_name, BM_SETCHECK, cpu_read_register_value("SR."#reg_name) == 0 ? BST_CHECKED : BST_UNCHECKED, 0);
 	
 		MODIFY_CHECKBOX(C);
 		MODIFY_CHECKBOX(Z);
@@ -398,7 +512,7 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 
 	#undef MODIFY_CHECKBOX
 
-		PostMessage(hDlg, WM_SCROLL_TO_ADDR, regs.PC, 0);
+		//PostMessage(hDlg, WM_SCROLL_TO_ADDR, regs.PC, 0);
 		return TRUE;
 	}
 	else if (nMessage == WM_SCROLL_TO_ADDR)
@@ -456,16 +570,87 @@ INT_PTR CALLBACK CPUDebuggerCallback(HWND hDlg, UINT nMessage, WPARAM wParam, LP
 		}
 		else if (wCommandID == IDC_BUTTON_RESET)
 		{
-			powerup();
-
-			cpu_reset();
-			ppu_init();
+			emulator_reset();
 		}
 	}
 
 	#undef WM_SCROLL_TO_ADDR
 
 	return FALSE;
+}
+static int write_cursor;
+static int buffer_size;
+static int playing = 0;
+static int buffer_delay = 1;
+void APUBufferCallback(double *pBuffer, int nSize)
+{
+	if (g_pDSoundBuffer)
+	{
+		LPVOID pvAudioPtr1;
+		DWORD  dwAudioBytes1;
+		LPVOID pvAudioPtr2;
+		DWORD dwAudioBytes2;
+		short *ptr;
+		HRESULT hr;
+		int i;
+		int targetSample;
+		int nSizeToWrite = nSize * sizeof(short);
+
+		//hr = IDirectSoundBuffer8_Stop(g_pDSoundBuffer);
+		//if (FAILED(hr))
+		//{
+		//	return;
+		//}
+
+		hr = IDirectSoundBuffer8_Lock(g_pDSoundBuffer, write_cursor, nSizeToWrite, &pvAudioPtr1, &dwAudioBytes1, &pvAudioPtr2, &dwAudioBytes2, 0);
+		if (FAILED(hr))
+		{
+			return;
+		}
+
+		write_cursor = (write_cursor + nSizeToWrite) % buffer_size;
+
+		ptr = pvAudioPtr1;
+		for (i = 0; i < nSize; ++i)
+		{
+			targetSample = (int)(pBuffer[i] * USHRT_MAX + SHRT_MIN);
+			if (targetSample > SHRT_MAX)
+			{
+				targetSample = SHRT_MAX;
+			}
+			if (targetSample < SHRT_MIN)
+			{
+				targetSample = SHRT_MIN;
+			}
+			*ptr = targetSample;
+			++ptr;
+			if ((BYTE *)ptr > (BYTE *)pvAudioPtr1 + dwAudioBytes1)
+			{
+				ptr = pvAudioPtr2;
+			}
+		}
+
+		hr = IDirectSoundBuffer8_Unlock(g_pDSoundBuffer, pvAudioPtr1, dwAudioBytes1, pvAudioPtr2, dwAudioBytes2);
+		if (FAILED(hr))
+		{
+			return;
+		}
+
+		if (buffer_delay > 0)
+		{
+			--buffer_delay;
+			return;
+		}
+		if (!playing)
+		{
+			hr = IDirectSoundBuffer8_Play(g_pDSoundBuffer, 0, 0, DSBPLAY_LOOPING);
+			if (FAILED(hr))
+			{
+				return;
+			}
+			playing = 1;
+		}
+	}
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
@@ -477,6 +662,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 	static HBITMAP hBitmap;
 	static LPBITMAPINFOHEADER pBMIHeader = NULL;
 	static LPDWORD pColorMask = NULL;
+	static char fileName[MAX_PATH] = "";
+
 	PAINTSTRUCT ps;
 	RECT rt;
 #endif // !RX
@@ -532,13 +719,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 		wCommondID = LOWORD(wParam);
 		if (wCommondID == ID_FILE_OPEN)
 		{
-			if (rom_loaded)
-			{
-				ines_unloadrom();
-			}
-
-			char fileName[MAX_PATH] = "";
-
 			OPENFILENAMEA  ofn;
 			ZeroMemory(&ofn, sizeof(ofn));
 			
@@ -550,29 +730,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 			ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST;
 
 			if (GetOpenFileNameA(&ofn))
-			{
-				DWORD err = CommDlgExtendedError();
-				ines_loadrom(fileName);
-			
+			{			
+				emulator_load(fileName);
 				rom_loaded = 1;
-
-				powerup();
-
-				cpu_reset();
-				ppu_init();
-
-				input_init(handle_key_event);
 			}
 		}
 		else if (wCommondID == ID_DEBUG_NAMETABLES)
 		{
-			if (g_hWndNameTable)
+			if (g_hWndPPUStatus)
 			{
-				ShowWindow(g_hWndNameTable, SW_SHOWNORMAL);
+				ShowWindow(g_hWndPPUStatus, SW_SHOWNORMAL);
 			}
 			else
 			{
-				g_hWndNameTable = CreateNameTableWnd();
+				g_hWndPPUStatus = RXCreateWindow(RX_NES_PPU_STATUS_WND_CLASS, _T("PPU Status"), 256 * 4, 480, PPUStatusWndProc);
 			}
 		}
 		else if (wCommondID == ID_DEBUG_CPUDEBUGGER)
@@ -583,6 +754,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT nMessage, WPARAM wParam, LPARAM lParam)
 			}
 			ShowWindow(g_hWndCpuDebugger, SW_SHOWNORMAL);
 		}
+		else if (wCommondID == ID_DEBUG_APUSTATUS)
+		{
+			if (g_hWndApuStatus)
+			{
+				ShowWindow(g_hWndApuStatus, SW_SHOWNORMAL);
+			}
+			else
+			{
+				g_hWndApuStatus = RXCreateWindow(RX_NES_APU_STATUS_WND_CLASS, _T("APU Status"), 256 * 2, 256 * 2, APUStatusWndProc);
+			}
+		}
+		break;
+
+	case WM_DROPFILES:
+		if (DragQueryFileA((HDROP)wParam, 0, fileName, MAX_PATH))
+		{
+			DragFinish((HDROP)wParam);
+			emulator_load(fileName);
+			rom_loaded = 1;
+		}
+		break;
 
 	default:
 		break;
@@ -661,6 +853,42 @@ BOOL InitDX(HWND hWnd)
 		return FALSE;
 	}
 
+	hr = DirectSoundCreate8(&DSDEVID_DefaultPlayback, &g_pDSound, NULL);
+	if (FAILED(hr))
+	{
+		return FALSE;
+	}
+
+	hr = IDirectSound8_SetCooperativeLevel(g_pDSound, hWnd, DSSCL_PRIORITY);
+	if (FAILED(hr))
+	{
+		return FALSE;
+	}
+
+	WAVEFORMATEX wfx;
+	ZeroMemory(&wfx, sizeof(wfx));
+	wfx.cbSize = sizeof(wfx);
+	wfx.nChannels = 1;
+	wfx.nSamplesPerSec = EMULATOR_DEF_SOUND_SAMLE_RATE;
+	wfx.wBitsPerSample = sizeof(u16) * 8;
+	wfx.wFormatTag = WAVE_FORMAT_PCM;
+	wfx.nBlockAlign = wfx.nChannels * wfx.wBitsPerSample / 8;
+	wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
+
+	DSBUFFERDESC dsbd;
+	ZeroMemory(&dsbd, sizeof(dsbd));
+	dsbd.dwSize = sizeof(dsbd);
+	dsbd.dwFlags = DSBCAPS_GLOBALFOCUS;
+	buffer_size = dsbd.dwBufferBytes = EMULATOR_DEF_SOUND_SAMLE_RATE * EMULATOR_DEF_SOUND_DURATION * sizeof(short) / 1000 * 10;
+	dsbd.lpwfxFormat = &wfx;
+	dsbd.guid3DAlgorithm = GUID_NULL;
+
+	hr = IDirectSound8_CreateSoundBuffer(g_pDSound, &dsbd, &g_pDSoundBuffer, NULL);
+	if (FAILED(hr))
+	{
+		return FALSE;
+	}
+
 	return TRUE;
 }
 
@@ -702,7 +930,17 @@ void DestroyDX()
 		IDirectInputDevice_Release(g_pDInputDevice);
 		g_pDInputDevice = NULL;
 	}
-
+	
+	if (g_pDSoundBuffer)
+	{
+		IDirectSoundBuffer_Release(g_pDSoundBuffer);
+		g_pDSoundBuffer = NULL;
+	}
+	if (g_pDSound)
+	{
+		IDirectSound_Release(g_pDSound);
+		g_pDSound = NULL;
+	}
 }
 
 int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCmdLine, int nCmdShow)
@@ -728,7 +966,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 	SetRect(&rt, 0, 0, 512, 480);
 	AdjustWindowRect(&rt, WS_OVERLAPPEDWINDOW, TRUE);
 
-	HWND hWnd = CreateWindow(RX_NES_WND_CLASS, _T("rxNES"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, hInstance, NULL);
+	HWND hWnd = CreateWindowEx(WS_EX_ACCEPTFILES, RX_NES_WND_CLASS, _T("rxNES"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rt.right - rt.left, rt.bottom - rt.top, NULL, NULL, hInstance, NULL);
 	if (!hWnd)
 	{
 		return EXIT_FAILURE;
@@ -744,8 +982,9 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 	rom_loaded = 0;
 	running = 1;
 
-	LOG_INIT();
-	mapper_init();
+	emulator_init();
+	emulator_set_sound_callback(APUBufferCallback);
+	emulator_set_input_handler(InputHandler);
 
 	while (running)
 	{
@@ -765,12 +1004,10 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 		{
 			if (!pause && rom_loaded && running)
 			{
-				for (int i = 0; i < 3; ++i)
-					cpu_execute_translate(CYCLE_PER_SCANLINE);
-				ppu_render_scanline(CYCLE_PER_SCANLINE * 3);
+				emulator_run_loop();
 				//scan_line = (scan_line + 1) % 240;
-				extern u16 cur_scanline;
-				scan_line = cur_scanline;
+				extern u16 ppu_current_scanline;
+				scan_line = ppu_current_scanline;
 				if (scan_line == 0)
 				{
 #ifdef RXNES_RENDER_DX9
@@ -784,7 +1021,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 					if (SUCCEEDED(hr))
 					{
-						CopyMemory(lockedRect.pBits, screen, 256 * 240 * sizeof(u16));
+						CopyMemory(lockedRect.pBits, ppu_screen_buffer, 256 * 240 * sizeof(u16));
 						IDirect3DSurface9_UnlockRect(g_pOffscreenBuffer);
 					}
 					//hr = IDirect3DDevice9_UpdateSurface(g_pD3DDevice, g_pOffscreenBuffer, NULL, g_pBackbuffer, NULL);
@@ -793,7 +1030,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 #else
 					if (g_pScreenBuf)
 					{
-						memcpy(g_pScreenBuf, screen, 256 * 240 * sizeof(u16));
+						memcpy(g_pScreenBuf, ppu_screen_buffer, sizeof(ppu_screen_buffer));
 						InvalidateRect(hWnd, NULL, FALSE);
 					}
 #endif
@@ -808,7 +1045,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 					if (current.QuadPart - last.QuadPart > frequency.QuadPart)
 					{
-						_stprintf(szWindowTitle, _T("RxNes FPS : %d"), frameCount);
+						_stprintf(szWindowTitle, _T("rxNES FPS : %d"), frameCount);
 						SetWindowText(hWnd, szWindowTitle);
 						
 						frameCount = 0;
@@ -822,9 +1059,7 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpszCm
 
 	DestroyDX();
 
-	ines_unloadrom();
-
-	LOG_CLOSE();
+	emulator_uninit();
 
 	return EXIT_SUCCESS;
 }

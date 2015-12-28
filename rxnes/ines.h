@@ -27,7 +27,9 @@ typedef struct
     u8 *chr_banks;
 } ines_rom;
 
-void ines_loadrom( char *filename );
+void ines_loadrom(const char *filename );
 void ines_unloadrom( void );
+
+extern ines_rom *c_rom;
 
 #endif //_INES_H
