@@ -863,7 +863,7 @@ u32 ppu_render_scanline( u32 n_cycles )
 		// if ppu draw sprite bits enabled
 		if (memory[PPU_CTRL_REG2] & 0x10)
 		{
-			for (i = 0; i < cnt; ++i)
+			for (i = cnt - 1; i >= 0; --i)
 			{
 				if (ppu_secondary_oam.secondary_oam[i][2] & 0x20)
 				{
@@ -878,7 +878,7 @@ u32 ppu_render_scanline( u32 n_cycles )
 		// if ppu draw sprite bits enabled
 		if (memory[PPU_CTRL_REG2] & 0x10)
 		{
-			for (i = 0; i < cnt; ++i)
+			for (i = cnt - 1; i >= 0; --i)
 			{
 				if (!(ppu_secondary_oam.secondary_oam[i][2] & 0x20))
 				{
