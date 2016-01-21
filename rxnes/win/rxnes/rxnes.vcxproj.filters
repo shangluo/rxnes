@@ -1,0 +1,129 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="core">
+      <UniqueIdentifier>{c3bf41db-33ec-4922-a17f-5835164df51b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="mappers">
+      <UniqueIdentifier>{d5b8434c-39cc-471b-ab8d-c01514380f57}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="win">
+      <UniqueIdentifier>{0616ca5d-8eca-4c2f-9204-92dde24fbf9e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="win\资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
+    </Filter>
+    <Filter Include="video">
+      <UniqueIdentifier>{bacf822c-3631-46d4-a9fc-03fae6ca309d}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Resource.rc">
+      <Filter>win\资源文件</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.c">
+      <Filter>win</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mappers\mapper1.c">
+      <Filter>mappers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mappers\mapper2.c">
+      <Filter>mappers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mappers\mapper3.c">
+      <Filter>mappers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mappers\mapper4.c">
+      <Filter>mappers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mappers\mapper23.c">
+      <Filter>mappers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mappers\mapper33.c">
+      <Filter>mappers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\cpu.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\emulator.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\ines.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\input.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\log.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\mapper.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\papu.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\ppu.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\core\state.c">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\video\video.c">
+      <Filter>video</Filter>
+    </ClCompile>
+    <ClCompile Include="dx9.cpp">
+      <Filter>win</Filter>
+    </ClCompile>
+    <ClCompile Include="gl.cpp">
+      <Filter>win</Filter>
+    </ClCompile>
+    <ClCompile Include="dx11.cpp">
+      <Filter>win</Filter>
+    </ClCompile>
+    <ClCompile Include="ddraw.cpp">
+      <Filter>win</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\core\cpu.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\emulator.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\global.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\ines.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\input.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\log.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\mapper.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\papu.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\ppu.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\state.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\core\types.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\video\video.h">
+      <Filter>video</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
