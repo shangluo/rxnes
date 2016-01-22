@@ -244,22 +244,6 @@ void dx9_uninit()
 	SAFE_RELEASE(g_pVertexBuffer);
 }
 
-static struct dx9_init_block
-{
-	video_context *_context;
-	dx9_init_block()
-	{
-		video_context *_context = video_context_create(video_name, dx9_init, dx9_render_frame, dx9_uninit);
-		video_context_make_current(_context);
-	}
-
-	~dx9_init_block()
-	{
-		video_context_make_current(NULL);
-		video_context_destroy(_context);
-	}
-}dx9_video_block;
-
 video_init_block_impl(dx9, dx9_init, dx9_render_frame, dx9_uninit)
 
 #endif
